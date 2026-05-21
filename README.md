@@ -77,6 +77,55 @@ if cell.startswith(':asm'):
     # then dispatch as if user had typed ':formula <formula_src>'
 ```
 
+## Structural macros
+
+### `#let .name = VALUE in BODY`
+
+Pushes `VALUE` onto the subject via opcode 8 and binds `.name` to axis 2 in
+`BODY`. Any axes that were already in scope are shifted rightward via
+`+peg(3, axis)`, so the old names still resolve in the body.
+
+```
+:subject {.before .target .after}
+#let .next = (%inc .target) in
+  [.before .next .after]
+; -> [8 [4 0 6] [0 6] [0 2] 0 15]
+; against [10 41 99] -> [10 42 99]
+```
+
+`VALUE` and `BODY` are both formula positions (bare atoms lift). Shadowing
+an existing schema name is a compile error.
+
+### `#match EXPR { PAT => BODY ... _ => DEFAULT }`
+
+Pattern match on the value of `EXPR`. The scrutinee is evaluated once via
+opcode 8 — i.e. lifted onto the subject — then each `PAT` is compared
+against the lifted value via opcode 5 (eq), with opcode 6 (if) dispatching
+to the matching `BODY`. The `_ =>` default is required.
+
+```
+:subject {.tag .data}
+#match .tag {
+  1 => (%inc .data)
+  2 => .data
+  _ => 0
+}
+; -> [8 [0 2] 6 [5 [1 1] 0 2] [4 0 7] 6 [5 [1 2] 0 2] [0 7] 1 0]
+; against [1 41] -> 42
+; against [2 41] -> 41
+; against [9 41] -> 0
+```
+
+`EXPR` and each `BODY` are formula positions. `PAT`s are *noun literals* —
+they're compared against the scrutinee's runtime value, not against a
+formula. Bare atoms in `PAT` position are not lifted: writing `1 => ...`
+matches the atom `1`, not the formula `[1 1]`.
+
+In the body of each arm (and the default), the scrutinee is at axis 2, and
+the original schema axes are shifted rightward via `+peg(3, axis)` — same
+shift rule as `#let`. That's why `.data` resolves to `[0 7]` (not `[0 3]`)
+in the example above.
+
 ## What lifts and what doesn't
 
 Bare atoms get lifted to `[1 atom]` in formula positions. Not in noun-literal
