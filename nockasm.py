@@ -23,7 +23,14 @@ Syntax
 
   ; named opcodes (the only macro that's just lexing):
     (%slot N)       -> [0 N]
+    (%self)         -> [0 1]               ; whole subject
+    (%battery)      -> [0 2]               ; standard core battery axis
+    (%payload)      -> [0 3]               ; standard core payload axis
+    (%sample)       -> [0 6]               ; standard gate sample axis
+    (%context)      -> [0 7]               ; standard gate context axis
+    (%crash)        -> [0 0]               ; Nock crash idiom
     (%const X)      -> [1 X]
+    (%arm X)        -> [1 X]               ; intent-marker for callable formula
     (%eval S F)     -> [2 S F]
     (%isa F)        -> [3 F]
     (%inc F)        -> [4 F]

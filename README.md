@@ -36,7 +36,7 @@ to round-trip outputs through the reference interpreter.
 
 ```python
 from nockasm import expand
-print(expand("(%inc (%slot 1))"))
+print(expand("(%inc (%self))"))
 # [4 0 1]
 
 print(expand("""
@@ -72,7 +72,7 @@ CLI:
 ```bash
 python -m nockasm program.nasm           # canonical flat
 python -m nockasm --pretty program.nasm  # explicit binary cells
-echo "(%inc (%slot 1))" | python -m nockasm
+echo "(%inc (%self))" | python -m nockasm
 ```
 
 ## Integration with the Nock kernel
