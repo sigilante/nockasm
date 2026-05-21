@@ -1,17 +1,10 @@
-# nockasm
+# Nock Assembly
 
-A thin macro expander from Nock Assembly text to canonical Nock 4K. Lowering
-is one-pass, deterministic, and bijective-by-construction with the canonical
-tree. Output is parseable by `pinochle.parse_noun` and runnable on the
-`nock-kernel` Jupyter kernel.
+![](./img/hero.jpg)
 
-The goal is pedagogical: programmers who already know one language should be
-able to read Nock at the formula level without manually decoding axes. This
-is the layer between raw `[8 [1 0] [1 4 0 6] 0 1]` and Hoon.
+Nock Assembly is a thin macro over [Nock ISA](https://nock.is) designed to make the language more legible for pedagogical purposes.
 
 ## Design
-
-Five things the macro does. Stop there.
 
 | | |
 |---|---|
@@ -21,18 +14,7 @@ Five things the macro does. Stop there.
 | `#match E { ... }`   | Scrutinee lifted once via opcode 8. Nested opcode-6 dispatch on literal patterns. Required `_ =>` default. |
 | `; comments`         | And whitespace. |
 
-Anything else (closures, types, comprehensions) is out of scope. Graduate to
-Hoon when you need them.
-
-## Canonical spec wins
-
-This module follows Nock 4K. Where its behavior would contradict the spec,
-the spec wins. File a bug.
-
 ## Install / use
-
-Single file, no dependencies for the expander itself. `pip install pinochle`
-to round-trip outputs through the reference interpreter.
 
 ```python
 from nockasm import expand
@@ -50,7 +32,7 @@ print(expand("""
 # [8 [0 2] 6 [5 [1 1] 0 2] [4 0 7] 6 [5 [1 2] 0 2] [0 7] 1 0]
 ```
 
-End-to-end with pinochle:
+End-to-end with [`pinochle`](https://github.com/sigilante/pinochle):
 
 ```python
 from pinochle import nock, parse_noun
@@ -67,7 +49,7 @@ result  = nock(parse_noun("[10 41 99]"), formula)
 # result == [10 42 99]
 ```
 
-CLI:
+At the CLI:
 
 ```bash
 python -m nockasm program.nasm           # canonical flat
@@ -94,8 +76,6 @@ if cell.startswith(':asm'):
     formula_src = expand(cell[len(':asm'):])
     # then dispatch as if user had typed ':formula <formula_src>'
 ```
-
-Patch sketch only — not bundled in v0.
 
 ## What lifts and what doesn't
 
@@ -160,15 +140,6 @@ from disk and runs each through pinochle. The five benchmarks present
 (`dec`, `add`, `factorial`, `fibonacci`, `ackermann`) are faithful
 transcriptions of `urbit/benchmark/desk/bar/<name>.nock` — each `.nasm`
 expands to a noun bit-identical to the corresponding `.nock` formula.
-
-## What's deliberately not here
-
-- `#core` with `%fast` jet hints. Cores are non-trivial — the calling
-  convention with opcode 9 and the jet-matching rules deserve their own
-  pass. For now use the `%hint` opcode directly.
-- Closures / lambda lifting. That's Hoon's job.
-- Type checking of any kind.
-- Multi-form modules. One formula per program. Compose externally.
 
 ## License
 
