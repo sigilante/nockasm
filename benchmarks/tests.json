@@ -1,0 +1,32 @@
+[
+  {
+    "name": "dec",
+    "description": "Naive decrement of 100",
+    "subject": "100",
+    "result": "99"
+  },
+  {
+    "name": "add",
+    "description": "Naive addition 1000 + 2000",
+    "subject": "[1.000 2.000]",
+    "result": "3.000"
+  },
+  {
+    "name": "factorial",
+    "description": "Factorial of 5 (tail-recursive)",
+    "subject": "5",
+    "result": "120"
+  },
+  {
+    "name": "fibonacci",
+    "description": "Fibonacci of 10 (naive recursive)",
+    "subject": "10",
+    "result": "55"
+  },
+  {
+    "name": "ackermann",
+    "description": "Ackermann ack(3, 3)  [urbit/benchmark uses ack(3,6)=509; cut for pinochle]",
+    "subject": "[3 3]",
+    "result": "61"
+  }
+]

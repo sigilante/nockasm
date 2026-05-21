@@ -435,8 +435,16 @@ class Expander:
     #   'a' = axis position (must be atom; no lift)
     OPS = {
         # name -> (kinds, builder)
-        '%slot':  ('a',   lambda a: cell(0, a[0])),
-        '%const': ('n',   lambda a: cell(1, a[0])),
+        # 0-arg axis aliases for the standard Hoon core layout.
+        '%self':    ('',    lambda a: cell(0, 1)),
+        '%battery': ('',    lambda a: cell(0, 2)),
+        '%payload': ('',    lambda a: cell(0, 3)),
+        '%sample':  ('',    lambda a: cell(0, 6)),
+        '%context': ('',    lambda a: cell(0, 7)),
+        '%slot':    ('a',   lambda a: cell(0, a[0])),
+        '%crash':   ('',    lambda a: cell(0, 0)),
+        '%const':   ('n',   lambda a: cell(1, a[0])),
+        '%arm':     ('n',   lambda a: cell(1, a[0])),
         '%eval':  ('ff',  lambda a: cell(2, a[0], a[1])),
         '%isa':   ('f',   lambda a: cell(3, a[0])),
         '%inc':   ('f',   lambda a: cell(4, a[0])),
