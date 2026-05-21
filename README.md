@@ -107,6 +107,13 @@ arity arg, etc.). The per-opcode kinds:
 |-----------|-------|-------|
 | `%slot N` | a     | axis literal |
 | `%const X`| n     | any noun, no lift |
+| `%arm X`  | n     | synonym for `%const`; intent: callable formula |
+| `%crash`  | —     | `[0 0]` — Nock crash idiom |
+| `%self`   | —     | `[0 1]` — whole subject |
+| `%battery`| —     | `[0 2]` — standard core battery |
+| `%payload`| —     | `[0 3]` — standard core payload |
+| `%sample` | —     | `[0 6]` — standard gate sample |
+| `%context`| —     | `[0 7]` — standard gate context |
 | `%eval`   | ff    | both formulas |
 | `%isa`    | f     | |
 | `%inc`    | f     | |
@@ -118,6 +125,12 @@ arity arg, etc.). The per-opcode kinds:
 | `%edit N V F`| aff | |
 | `%hint T F`  | nf  | tag is a noun literal |
 | `%hintd T C F` | nff | clue is a formula — per 4K spec it's evaluated |
+
+The intent-marking opcodes (`%arm`, `%crash`, and the axis aliases) all lower
+to the same cells as their `%const` / `%slot` equivalents — they exist purely
+to surface meaning at the source level. `%arm X` is `%const X` for cases
+where `X` is a formula that will later be invoked via `%call`; `%self`
+through `%context` name the standard Hoon core/gate axes.
 
 `#let` value and body are formulas. `#match` scrutinee and arm bodies are
 formulas. Match *patterns* are noun literals (compared against the
@@ -137,9 +150,16 @@ cons-formula distribution pattern works as expected:
 ## Tests
 
 ```bash
-python test_nockasm.py   # unit tests, 55 cases
-python test_e2e.py       # end-to-end: expand -> pinochle -> verify, 19 cases
+python test_nockasm.py     # unit tests, 55 cases
+python test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
+python test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
 ```
+
+`test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`
+from disk and runs each through pinochle. The five benchmarks present
+(`dec`, `add`, `factorial`, `fibonacci`, `ackermann`) are faithful
+transcriptions of `urbit/benchmark/desk/bar/<name>.nock` — each `.nasm`
+expands to a noun bit-identical to the corresponding `.nock` formula.
 
 ## What's deliberately not here
 
