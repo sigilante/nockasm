@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nockasm"
+version = "1.0.0"
+description = "A thin macro expander from Nock Assembly to canonical Nock 4K"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Sigilante", email = "davisneale@gmail.com" }]
+
+[project.scripts]
+nockasm = "nockasm:_cli"
+
+[tool.hatch.build.targets.wheel]
+include = ["nockasm.py"]

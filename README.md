@@ -16,6 +16,10 @@ Nock Assembly is a thin macro over [Nock ISA](https://nock.is) designed to make 
 
 ## Install / use
 
+```bash
+pip install nockasm
+```
+
 ```python
 from nockasm import expand
 print(expand("(%inc (%self))"))
