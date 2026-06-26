@@ -91,7 +91,7 @@ import re
 import sys
 from typing import Union, Tuple, Dict, List, Optional, Any
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 # ----------------------------------------------------------------------

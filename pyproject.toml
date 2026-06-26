@@ -4,15 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nockasm"
-version = "1.0.0"
-description = "A thin macro expander from Nock Assembly to canonical Nock 4K"
+version = "1.1.0"
+description = "A thin macro expander from Nock Assembly to canonical Nock 4K, with a Jupyter kernel"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "Sigilante", email = "davisneale@gmail.com" }]
 
+[project.optional-dependencies]
+kernel = ["ipykernel>=6.0", "pinochle>=1.2.1"]
+
 [project.scripts]
 nockasm = "nockasm:_cli"
+nockasm-kernel-install = "nockasm_kernel.install:main"
 
 [tool.hatch.build.targets.wheel]
-include = ["nockasm.py"]
+include = [
+    "nockasm.py",
+    "nockasm_kernel/**",
+]
