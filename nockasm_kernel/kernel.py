@@ -88,7 +88,26 @@ class NockasmKernel(Kernel):
     # Dispatch
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _strip_leading_comments(code):
+        """Drop leading blank and ``;`` comment lines.
+
+        Directive detection below keys off the first line, but a cell is
+        naturally written with an explanatory ``;`` comment on top.  Comments
+        are inert to the assembler, so removing the leading ones lets a
+        ``#subject`` / ``#show`` / ``#help`` directive be recognised even when
+        it is preceded by commentary.
+        """
+        lines = code.split('\n')
+        i = 0
+        while i < len(lines) and (
+            not lines[i].strip() or lines[i].lstrip().startswith(';')
+        ):
+            i += 1
+        return '\n'.join(lines[i:])
+
     def _dispatch(self, code):
+        code = self._strip_leading_comments(code)
         if code.startswith('#subject'):
             rest = code[8:].strip()
             if '\n' in rest:
