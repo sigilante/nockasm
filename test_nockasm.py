@@ -42,10 +42,10 @@ check("peg(2, 5)", peg(2, 5), 9)  # 5=2*2+1 -> 2*peg(2,2)+1 = 2*4+1
 section("cord packing")
 # ----------------------------------------------------------------------
 
-# 'fast' little-endian: 0x74736166 == 1953461094? recompute.
+# 'fast' little-endian:
 # f=0x66, a=0x61, s=0x73, t=0x74
 # n = 0x66 | 0x61<<8 | 0x73<<16 | 0x74<<24
-#   = 0x74736166 = 1953461094
+#   = 0x74736166 = 1953718630
 check("cord_to_nat('fast')", cord_to_nat('fast'), 0x74736166)
 check("cord_to_nat('')", cord_to_nat(''), 0)
 check("cord_to_nat('a')", cord_to_nat('a'), 97)

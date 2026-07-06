@@ -81,6 +81,32 @@ if cell.startswith(':asm'):
     # then dispatch as if user had typed ':formula <formula_src>'
 ```
 
+## Hoon library
+
+`desk/lib/nockasm.hoon` is a port of the expander to Hoon: `.nasm` source
+in as a cord, Nock formula out as a noun. The parser is written in the
+`++rule` combinator idiom; errors crash with tagged traces
+(`%unbound-axis`, `%unknown-opcode`, `%let-shadows`, …).
+
+```
+> =nasm -build-file %/lib/nockasm/hoon
+> (expand:nasm '(%inc (%self))')
+[4 0 1]
+> .*([10 41 99] (expand:nasm ':subject {.a .b} .b'))
+[42 99]
+```
+
+The noun is directly usable with `.*` — no text round-trip. The Python
+suite is the conformance oracle: `test_hoon.py` expands every unit-test
+source and all five benchmarks through both implementations via
+`urbit eval` and compares nouns bit-for-bit (no ship required; set
+`URBIT_BIN` to your vere binary). `desk/tests/lib/nockasm.hoon` carries
+a representative subset for the on-ship test framework:
+
+```
+> -test %/tests/lib/nockasm ~
+```
+
 ## Structural macros
 
 ### `#let .name = VALUE in BODY`
@@ -186,6 +212,7 @@ cons-formula distribution pattern works as expected:
 python test_nockasm.py     # unit tests, 55 cases
 python test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
 python test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
+python test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
 ```
 
 `test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`
