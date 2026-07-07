@@ -121,6 +121,22 @@ across the two and governed by the round-trip law
 `nasm-from-jam` for reading jammed formulas back to source under the
 soundness law `lower(lift(f)) == f`. See `doc/compiler-target.md`.
 
+## Use in a NockApp
+
+The library compiles unmodified under `hoonc` and is registered in the
+[typhoon](https://github.com/sigilante/typhoon) registry, so any
+[Nockup](https://github.com/nockchain/nockchain/tree/master/crates/nockup)
+project can depend on it by name:
+
+```toml
+[dependencies]
+"sigilante/nockasm" = "latest"
+```
+
+Then `/+  nockasm` in your kernel and call `expand:nockasm` (cord in,
+formula out), `render:nockasm`, or `nasm-from-jam:nockasm` at runtime —
+or precompute formulas at build time via `/#`.
+
 ## Structural macros
 
 ### `#let .name = VALUE in BODY`
