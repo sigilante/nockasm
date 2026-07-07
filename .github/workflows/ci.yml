@@ -49,6 +49,8 @@ jobs:
         run: URBIT_BIN=./urbit python test_hoon.py
       - name: desk tests under eval shim
         run: URBIT_BIN=./urbit python test_desk.py
+      - name: nasm clay mark
+        run: if [ -f test_mark.py ]; then URBIT_BIN=./urbit python test_mark.py; fi
 
   nasmc:
     name: nasmc differential (nockvm)
