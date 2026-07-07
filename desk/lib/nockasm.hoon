@@ -21,6 +21,12 @@
 ::      > (render:nasm (parse:nasm ':subject {.a .b}  (%eq  .a  .b)'))
 ::      ':subject {.a .b}\0a(%eq .a .b)\0a'
 ::
+::    jammed formulas lift back to source (+lift is deterministic and
+::    zero-heuristic; sound: (lower ~ (lift f)) === f for every noun):
+::
+::      > (nasm-from-jam:nasm (jam [4 0 1]))
+::      '(%inc (%slot 1))\0a'
+::
 ::    syntax:
 ::      ; comments to end-of-line
 ::
@@ -309,15 +315,15 @@
   |=  axes=(map @t @ud)
   ^-  (map @t @ud)
   (~(run by axes) |=(a=@ud (peg 3 a)))
-::  +lift: a bare atom in formula position becomes [1 atom]
+::  +quot: a bare atom in formula position becomes [1 atom]
 ::
-++  lift  |=(n=* ?@(n [1 n] n))
+++  quot  |=(n=* ?@(n [1 n] n))
 ::  +form: expand in formula position (lifting)
 ::
 ++  form
   |=  [a=nasm axes=(map @t @ud)]
   ^-  *
-  (lift (expa a axes))
+  (quot (expa a axes))
 ::  +ax-arg: expand in axis position (must be an atom)
 ::
 ++  ax-arg
@@ -445,6 +451,68 @@
       ?~(sch ~ [(weld ":subject " (sema-text u.sch)) ~])
     (rend ast 0 0)
   (crip (zing (turn lines |=(t=tape (snoc t '\0a')))))
+::  +nasm-from-jam: jammed formula -> canonical .nasm source
+::
+++  nasm-from-jam
+  |=  a=@
+  ^-  @t
+  (render ~ (lift (cue a)))
+::  +lift: read a noun as a formula: the deterministic, zero-heuristic
+::  lift. named ops by nock's positional grammar; structural raw cells
+::  wherever the shape is not a valid formula; no intent claims
+::  (constants are %const, never %arm; axes are %slot, never the core
+::  aliases; no macro skeleton is recognized). byte-identical to the
+::  python lift through +render.
+::
+::  soundness law:  (lower ~ (lift f))  ===  f  for every noun f
+::
+++  lift
+  |=  n=*
+  ^-  nasm
+  ?@  n  [%atom n]
+  ?^  -.n
+    ::  cons-formula: both halves are formula positions
+    [%cell [$(n -.n) $(n +.n) ~]]
+  ?+  -.n  (noun-ast n)
+    %0   ?^(+.n (noun-ast n) [%op 'slot' [%atom +.n] ~])
+    %1   [%op 'const' (noun-ast +.n) ~]
+    %2   ?.  ?=([^ ^] +.n)  (noun-ast n)
+         [%op 'eval' $(n +<.n) $(n +>.n) ~]
+    %3   ?.  ?=(^ +.n)  (noun-ast n)
+         [%op 'isa' $(n +.n) ~]
+    %4   ?.  ?=(^ +.n)  (noun-ast n)
+         [%op 'inc' $(n +.n) ~]
+    %5   ?.  ?=([^ ^] +.n)  (noun-ast n)
+         [%op 'eq' $(n +<.n) $(n +>.n) ~]
+    %6   ?.  ?=([^ ^ ^] +.n)  (noun-ast n)
+         [%op 'if' $(n +<.n) $(n +>-.n) $(n +>+.n) ~]
+    %7   ?.  ?=([^ ^] +.n)  (noun-ast n)
+         [%op 'comp' $(n +<.n) $(n +>.n) ~]
+    %8   ?.  ?=([^ ^] +.n)  (noun-ast n)
+         [%op 'push' $(n +<.n) $(n +>.n) ~]
+    %9   ?.  ?=([@ ^] +.n)  (noun-ast n)
+         [%op 'call' [%atom +<.n] $(n +>.n) ~]
+    %10  ?.  ?=([[@ ^] ^] +.n)  (noun-ast n)
+         [%op 'edit' [%atom +<-.n] $(n +<+.n) $(n +>.n) ~]
+    %11  ?:  ?=([@ ^] +.n)
+           [%op 'hint' [%atom +<.n] $(n +>.n) ~]
+         ?.  ?=([[* ^] ^] +.n)  (noun-ast n)
+         [%op 'hintd' (noun-ast +<-.n) $(n +<+.n) $(n +>.n) ~]
+  ==
+::  +noun-ast: a noun as pure structure: atoms and right-spine-
+::  flattened raw cells, no formula reading
+::
+++  noun-ast
+  |=  n=*
+  ^-  nasm
+  ?@  n  [%atom n]
+  =/  elems
+    =/  cur  `*`n
+    =|  acc=(list nasm)
+    |-  ^-  (list nasm)
+    ?@  cur  (flop `(list nasm)`[[%atom cur] acc])
+    $(acc [(noun-ast -.cur) acc], cur +.cur)
+  [%cell elems]
 ::  +sema-text: schemas always render wide; right spines flatten
 ::
 ++  sema-text

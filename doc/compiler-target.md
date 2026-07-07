@@ -1,7 +1,7 @@
 # Nockasm as a compiler target
 
-*Spec, v0.2 — 2026-07-06. M0 is implemented (this branch); later
-phases are design.*
+*Spec, v0.3 — 2026-07-07. M0 and M0.5 are implemented; later phases
+are design.*
 
 Nockasm today is a one-way street: a human writes `.nasm`, `expand`
 produces canonical Nock. This document specs the other direction — a
@@ -54,7 +54,7 @@ Two integration levels:
   artifact by construction. This is the core proposal.
 - **L2 — macro extensions.** Nockasm grows gate/core/loop macros so
   emitted assembly is compact rather than drowning in
-  `%push`/`%call` scaffolding. **Conditional** — see §6.
+  `%push`/`%call` scaffolding. **Conditional** — see §7.
 
 ## 3. The IR contract (M0 — implemented)
 
@@ -147,9 +147,51 @@ The rules, as implemented:
 - **Program**: `:subject SCH` line when a schema is present, then the
   expression at indent 0; every line newline-terminated.
 - **Comments** are not represented in the IR and never emitted
-  (provenance annotations are §7 and ride a side channel).
+  (provenance annotations are §8 and ride a side channel).
 
-## 5. Mapping Jock environments to names
+## 5. Jamfiles and the deterministic lift (M0.5 — implemented)
+
+Nock artifacts in the wild are jamfiles — hoonc kernels, pills,
+`.jam` build outputs. `nasm-from-jam` (Hoon) / `nasm_from_jam`
+(Python, plus `python -m nockasm --from-jam formula.jam`) reads one
+and emits canonical `.nasm`: cue, then *lift*, then render.
+
+`lift : * -> nasm` is the **deterministic, zero-heuristic** reading of
+a noun as a formula. Nock is homoiconic — nothing in a noun marks it
+as code — so the contract is: the caller asserts the root is a
+formula, and the lift propagates that assumption through Nock's
+positional grammar (the expander's per-opcode kinds table read in
+reverse). Concretely:
+
+- Cell heads 0–11 with well-shaped tails lift to named ops; formula
+  positions recurse; a cell head means cons-formula (both halves
+  lift).
+- **Anywhere the shape is not a valid formula** — an atom in a formula
+  position (`[2 5 6]`), an opcode head above 11, a cell axis — the
+  node falls back to a structural raw cell, right-spine flattened.
+- **No intent is ever claimed**: constants are `%const` (never
+  `%arm`), axes are `%slot` (never the core aliases), and no macro
+  skeleton is recognized. Opcode-1 payloads render as pure data even
+  when they are batteries — that judgment belongs to tooling with
+  out-of-band knowledge (debug info), not to a deterministic reader.
+
+Soundness law, enforced over the corpus and the fallback zoo by
+`test_lift.py`, and cross-implementation (byte-identical lifted
+renders, via `test_hoon.py`):
+
+```
+(lower ~ (lift f))  ===  f        for every noun f
+```
+
+Misclassifying data as code is impossible by construction — the only
+cost of the no-heuristics stance is that lifted output for constants
+reads as data, which is the honest default.
+
+`jam`/`cue` ship in both implementations (canonical encoding,
+backreferences included; a `.jam` file is the jammed atom's bytes,
+little-endian).
+
+## 6. Mapping Jock environments to names
 
 Jock's lexical environment at any program point is a subject shape.
 The mapping is mechanical:
@@ -159,9 +201,9 @@ The mapping is mechanical:
 - Every Jock `let` becomes `#let` — the axis bookkeeping (`peg 3`
   shifting of names in scope) is what the library already implements.
 - Jock scalar-tag matches become `#match`. Structural patterns with
-  binders are an open extension (§8).
+  binders are an open extension (§9).
 
-## 6. Macro extensions (L2 — conditional)
+## 7. Macro extensions (L2 — conditional)
 
 Hand-written Nockasm (see `benchmarks/*.nasm`) exhibits the idioms
 every compiled functional program needs — gate, call, core, loop — as
@@ -228,7 +270,7 @@ add the sibling rather than weaken the test. For scale: `dec` in L2 is
 
 against ~40 lines hand-drilled today.
 
-## 7. Provenance channel
+## 8. Provenance channel
 
 Two tiers, both optional, neither in the IR:
 
@@ -248,7 +290,7 @@ Two tiers, both optional, neither in the IR:
    `lower`/`render` flag; release builds omit it; the differential
    suite runs with it off.
 
-## 8. Open questions
+## 9. Open questions
 
 1. **Structural match patterns.** `#match` compares whole nouns by
    equality. Jock destructuring (`[%tag a b]` binding `a`, `b`) wants
@@ -260,21 +302,22 @@ Two tiers, both optional, neither in the IR:
 3. **Optimization surface.** If Jock grows peephole passes, they could
    run on `$nasm` (legible before/after diffs) rather than on nouns.
    Nothing blocks either; the IR makes the option real.
-4. **A lifter** (Nock→Nockasm decompiler) was specced in v0.1 and cut:
-   it is sound and severable — the caller asserts the root is a
-   formula, Nock's positional grammar propagates that assumption, and
-   the only residual ambiguity is opcode-1 payloads (the battery
-   problem), which is harmless because `%const`/`%arm` lower
-   identically, so misclassification costs legibility, never bits.
-   But it is a decompiler without a user once compilers keep their own
-   debug info. Revisit only if a concrete consumer appears; the
-   analysis above is the starting point.
+4. **Heuristic lifting.** The *deterministic* lift shipped in M0.5
+   (§5) — jamfiles were the concrete consumer. What remains cut is the
+   heuristic tier specced in v0.1: skeleton recognition (re-sugaring
+   gates/cores/loops), core-alias axes, and `%arm` promotion of
+   opcode-1 payloads on use-evidence. All of it is sound
+   (`%const`/`%arm` lower identically, so misclassification costs
+   legibility, never bits) but it makes claims about intent, and
+   intent belongs to debug info. Revisit only if reading lifted
+   artifacts without provenance becomes a real workflow.
 
-## 9. Phasing
+## 10. Phasing
 
 | Phase | Deliverable | Repo | Status |
 |-------|-------------|------|--------|
-| M0 | `parse`/`lower`/`render` public, `nasm-version`, round-trip + parity tests | nockasm | **done (this branch)** |
+| M0 | `parse`/`lower`/`render` public, `nasm-version`, round-trip + parity tests | nockasm | **done** |
+| M0.5 | `jam`/`cue`, the deterministic `lift`, `nasm-from-jam` + CLI, soundness + parity tests | nockasm | **done** |
 | M1 | Jock backend: `emit : typed-ast -> nasm` behind a flag; differential CI vs legacy codegen (bit-identical nouns); `.nasm` artifacts in review | jock-lang | design |
 | M2 | The L2 decision, from M1's artifacts; if gated in: the frozen macro batch + benchmark-rewrite acceptance | nockasm | gated |
 | M3 | Provenance comments, `%spot` debug mode, `%nasm` clay mark | both | design |

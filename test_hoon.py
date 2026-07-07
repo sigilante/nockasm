@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 
-from nockasm import expand_to_noun, parse, render
+from nockasm import expand_to_noun, jam, lift, parse, render
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, 'desk', 'lib', 'nockasm.hoon')
@@ -41,6 +41,17 @@ def hoon_cord(s: str) -> str:
         else:
             out.append('\\%02x' % o)   # \0a etc. (hex escape)
     return "'" + ''.join(out) + "'"
+
+
+def hoon_hex(n: int) -> str:
+    """Render an int as a Hoon @ux literal (dots every 4 digits)."""
+    s = format(n, 'x')
+    groups = []
+    while len(s) > 4:
+        groups.insert(0, s[-4:])
+        s = s[:-4]
+    groups.insert(0, s)
+    return '0x' + '.'.join(groups)
 
 
 def hoon_atom(n: int) -> str:
@@ -165,17 +176,21 @@ def build_eval_input() -> str:
     good = GOOD + benchmark_cases()
     case_lines = []
     for name, src in good:
-        want = hoon_noun(expand_to_noun(src))
+        noun = expand_to_noun(src)
+        want = hoon_noun(noun)
         wren = hoon_cord(render(*parse(src)))
+        jatm = hoon_hex(jam(noun))
+        wlif = hoon_cord(render(None, lift(noun)))
         case_lines.append(
-            f'      [{hoon_cord(name)} {hoon_cord(src)} {want} {wren}]')
+            f'      [{hoon_cord(name)} {hoon_cord(src)} {want} {wren} '
+            f'{jatm} {wlif}]')
     bad_lines = [
         f'      [{hoon_cord(name)} {hoon_cord(src)}]' for name, src in BAD
     ]
     with open(LIB) as f:
         lib = f.read()
     harness = f"""
-=/  cases=(list [name=@t src=@t want=* wren=@t])
+=/  cases=(list [name=@t src=@t want=* wren=@t jat=@ wlif=@t])
   :~
 {chr(10).join(case_lines)}
   ==
@@ -186,7 +201,7 @@ def build_eval_input() -> str:
 =/  fails=(list [@t @t])
   ;:  weld
     %+  murn  cases
-    |=  [name=@t src=@t want=* wren=@t]
+    |=  [name=@t src=@t want=* wren=@t jat=@ wlif=@t]
     ^-  (unit [@t @t])
     =/  res  (mule |.((expand src)))
     ?:  ?=(%| -.res)  `[name 'crashed']
@@ -197,6 +212,12 @@ def build_eval_input() -> str:
     =/  rtr  (mule |.((expand p.ren)))
     ?:  ?=(%| -.rtr)  `[name 'roundtrip-crashed']
     ?.  =(p.rtr want)  `[name 'roundtrip-mismatch']
+    =/  lif  (mule |.((lift (cue jat))))
+    ?:  ?=(%| -.lif)  `[name 'lift-crashed']
+    ?.  =((lower ~ p.lif) want)  `[name 'lift-unsound']
+    =/  lrn  (mule |.((render ~ p.lif)))
+    ?:  ?=(%| -.lrn)  `[name 'lift-render-crashed']
+    ?.  =(p.lrn wlif)  `[name 'lift-render-mismatch']
     ~
   ::
     %+  murn  bads
@@ -223,7 +244,7 @@ def main():
     if 'nockasm-all-ok' in out:
         n_good = len(GOOD) + len(benchmark_cases())
         print(f'ok: {n_good} expansion cases match the python oracle '
-              f'(expand + render parity + round-trip), '
+              f'(expand + render parity + round-trip + jam-lift parity), '
               f'{len(BAD)} error cases crash as expected')
         return 0
     print('FAIL: hoon output did not match the oracle')
