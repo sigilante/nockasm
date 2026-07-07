@@ -137,6 +137,25 @@ Then `/+  nockasm` in your kernel and call `expand:nockasm` (cord in,
 formula out), `render:nockasm`, or `nasm-from-jam:nockasm` at runtime —
 or precompute formulas at build time via `/#`.
 
+## nasmc
+
+`nasmc/` is the compiler as a standalone binary — a NockApp modeled on
+hoonc, with the Hoon library compiled into its kernel, so expansion
+runs as Nock on nockvm:
+
+```bash
+cd nasmc && cargo build --release
+nasmc program.nasm               # -> program.jam  (raw formula jam)
+nasmc --text program.nasm        # canonical flat noun to stdout
+nasmc --render program.nasm      # canonical formatting to stdout
+nasmc --lift formula.jam         # jamfile back to .nasm source
+```
+
+`test_nasmc.py` holds it to the same standard as everything else:
+every corpus jam byte-identical to the Python oracle — a third
+independent executor (CPython, Hoon-on-vere, Hoon-on-nockvm) of the
+same laws. See `nasmc/README.md`.
+
 ## Structural macros
 
 ### `#let .name = VALUE in BODY`

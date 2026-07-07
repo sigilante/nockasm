@@ -49,3 +49,23 @@ jobs:
         run: URBIT_BIN=./urbit python test_hoon.py
       - name: desk tests under eval shim
         run: URBIT_BIN=./urbit python test_desk.py
+
+  nasmc:
+    name: nasmc differential (nockvm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # toolchain comes from nasmc/rust-toolchain.toml (pinned nightly;
+      # nockvm uses unstable features)
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nasmc
+      - name: build nasmc
+        # run from nasmc/ so rustup picks up its rust-toolchain.toml
+        working-directory: nasmc
+        run: cargo build --release
+      - name: differential suite (jam parity vs python oracle)
+        run: python test_nasmc.py
