@@ -29,8 +29,7 @@ include = [
 # and benchmarks, none of which belong in the PyPI artifact.
 [tool.hatch.build.targets.sdist]
 include = [
-    "nockasm.py",
-    "nockasm_kernel/**",
-    "README.md",
-    "pyproject.toml",
+    "/nockasm.py",
+    "/nockasm_kernel",
+    "/README.md",
 ]
