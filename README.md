@@ -137,6 +137,11 @@ Then `/+  nockasm` in your kernel and call `expand:nockasm` (cord in,
 formula out), `render:nockasm`, or `nasm-from-jam:nockasm` at runtime —
 or precompute formulas at build time via `/#`.
 
+`desk/mar/nasm.hoon` is a clay mark for `.nasm` files (noun form: the
+source cord, parallel to `%hoon`), so the same files live in Urbit
+desks, hoonc builds (`/*  f  %nasm  /path` loads octs), and text
+tooling alike. See `doc/nasm-mark.md`.
+
 ## Structural macros
 
 ### `#let .name = VALUE in BODY`
@@ -246,6 +251,7 @@ python test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eva
 python test_render.py      # target-IR round-trip law + render idempotence
 python test_lift.py        # jam/cue vectors + lift soundness, 69 cases
 python test_desk.py        # on-ship test arms via urbit eval shim
+python test_mark.py        # %nasm clay mark grow/grab round-trips
 ```
 
 `test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`
