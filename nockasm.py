@@ -97,6 +97,20 @@ Target IR (see doc/compiler-target.md)
       well-formed IR value, and rendering is idempotent through parse.
       The Hoon implementation renders byte-identically.
 
+  lift(noun) -> ast
+      Read a noun as a formula: the deterministic, zero-heuristic
+      lift. Named ops by Nock's positional grammar; structural raw
+      cells wherever the shape is not a valid formula; no intent
+      claims. Soundness: lower(None, lift(f)) == f for every noun.
+
+  jam(noun) -> int / cue(int) -> noun
+      Urbit noun serialization; a .jam file is the jammed atom's
+      bytes, little-endian.
+
+  nasm_from_jam(data: bytes) -> str
+      Jamfile bytes to canonical .nasm text; also at the CLI:
+      python -m nockasm --from-jam formula.jam
+
 Discipline
 ==========
 
@@ -612,6 +626,188 @@ def print_noun(n: Noun, pretty: bool = False) -> str:
 
 
 # ----------------------------------------------------------------------
+# Jam and cue: Urbit noun serialization
+#
+# A .jam file is the bytes of a jammed atom, little-endian. cue()
+# inverts jam(). Both follow the canonical bit-level encoding
+# (LSB-first: atom = 0 + mat, cell = 10 + head + tail, backref =
+# 11 + mat of the original tag position).
+# ----------------------------------------------------------------------
+
+def jam(n: Noun) -> int:
+    """Serialize a noun to an atom."""
+    out = 0
+    pos = 0
+    memo: Dict[Noun, int] = {}
+
+    def emit(width: int, bits: int = 0):
+        nonlocal out, pos
+        out |= bits << pos
+        pos += width
+
+    def mat(v: int):
+        if v == 0:
+            emit(1, 1)
+            return
+        b = v.bit_length()
+        c = b.bit_length()
+        emit(c, 0)                              # c zeros
+        emit(1, 1)                              # stop bit
+        emit(c - 1, b & ((1 << (c - 1)) - 1))   # length, high bit implicit
+        emit(b, v)
+
+    def go(n: Noun):
+        ref = memo.get(n)
+        if ref is not None:
+            if isinstance(n, int) and n.bit_length() <= ref.bit_length():
+                emit(1, 0)
+                mat(n)
+                return
+            emit(2, 0b11)
+            mat(ref)
+            return
+        memo[n] = pos
+        if isinstance(n, int):
+            emit(1, 0)
+            mat(n)
+        else:
+            emit(2, 0b01)
+            go(n[0])
+            go(n[1])
+
+    go(n)
+    return out
+
+
+def cue(a: int) -> Noun:
+    """Deserialize a jammed atom back to a noun."""
+    memo: Dict[int, Noun] = {}
+
+    def bit(i: int) -> int:
+        return (a >> i) & 1
+
+    def rub(i: int):
+        z = 0
+        while bit(i + z) == 0:
+            z += 1
+        if z == 0:
+            return 0, i + 1
+        j = i + z + 1
+        lbits = (a >> j) & ((1 << (z - 1)) - 1)
+        length = lbits | (1 << (z - 1))
+        j += z - 1
+        return (a >> j) & ((1 << length) - 1), j + length
+
+    def go(i: int):
+        start = i
+        if bit(i) == 0:
+            v, j = rub(i + 1)
+            memo[start] = v
+            return v, j
+        if bit(i + 1) == 0:
+            h, j = go(i + 2)
+            t, k = go(j)
+            memo[start] = (h, t)
+            return (h, t), k
+        r, j = rub(i + 2)
+        return memo[r], j
+
+    n, _ = go(0)
+    return n
+
+
+# ----------------------------------------------------------------------
+# Lift: Nock noun -> IR
+#
+# The deterministic, zero-heuristic lift (doc/compiler-target.md).
+# The caller asserts the noun is a formula; positions follow Nock's
+# grammar. Where a shape does not match a valid formula (an atom in a
+# formula position, an opcode head above 11), the node falls back to
+# a structural raw cell -- always sound, never sugared. No intent is
+# ever claimed: constants are %const (never %arm), axes are %slot
+# (never the core aliases), and no macro skeleton is recognized.
+#
+# Soundness law: lower(None, lift(f)) == f for every noun f.
+# ----------------------------------------------------------------------
+
+def _noun_ast(n: Noun) -> Node:
+    """A noun as pure structure: atoms and right-spine-flattened
+    raw cells, no formula reading."""
+    if isinstance(n, int):
+        return IntAtom(n)
+    elems = []
+    cur = n
+    while isinstance(cur, tuple):
+        elems.append(_noun_ast(cur[0]))
+        cur = cur[1]
+    elems.append(IntAtom(cur))
+    return RawCell(elems)
+
+
+def _cell(x) -> bool:
+    return isinstance(x, tuple)
+
+
+def lift(n: Noun) -> Node:
+    """Read a noun as a formula; see the soundness law above."""
+    if isinstance(n, int):
+        return IntAtom(n)
+    h, t = n
+    if _cell(h):
+        # cons-formula: both halves are formula positions
+        return RawCell([lift(h), lift(t)])
+    if h == 0:
+        if isinstance(t, int):
+            return OpApp('%slot', [IntAtom(t)])
+    elif h == 1:
+        return OpApp('%const', [_noun_ast(t)])
+    elif h == 2:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%eval', [lift(t[0]), lift(t[1])])
+    elif h == 3:
+        if _cell(t):
+            return OpApp('%isa', [lift(t)])
+    elif h == 4:
+        if _cell(t):
+            return OpApp('%inc', [lift(t)])
+    elif h == 5:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%eq', [lift(t[0]), lift(t[1])])
+    elif h == 6:
+        if (_cell(t) and _cell(t[0]) and _cell(t[1])
+                and _cell(t[1][0]) and _cell(t[1][1])):
+            return OpApp('%if', [lift(t[0]), lift(t[1][0]),
+                                 lift(t[1][1])])
+    elif h == 7:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%comp', [lift(t[0]), lift(t[1])])
+    elif h == 8:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%push', [lift(t[0]), lift(t[1])])
+    elif h == 9:
+        if _cell(t) and isinstance(t[0], int) and _cell(t[1]):
+            return OpApp('%call', [IntAtom(t[0]), lift(t[1])])
+    elif h == 10:
+        if (_cell(t) and _cell(t[0]) and isinstance(t[0][0], int)
+                and _cell(t[0][1]) and _cell(t[1])):
+            return OpApp('%edit', [IntAtom(t[0][0]), lift(t[0][1]),
+                                   lift(t[1])])
+    elif h == 11:
+        if _cell(t) and isinstance(t[0], int) and _cell(t[1]):
+            return OpApp('%hint', [IntAtom(t[0]), lift(t[1])])
+        if (_cell(t) and _cell(t[0]) and _cell(t[0][1])
+                and _cell(t[1])):
+            return OpApp('%hintd', [_noun_ast(t[0][0]), lift(t[0][1]),
+                                    lift(t[1])])
+    return _noun_ast(n)
+
+
+def nasm_from_jam(data: bytes) -> str:
+    """Jamfile bytes -> canonical .nasm text for the jammed formula."""
+    return render(None, lift(cue(int.from_bytes(data, 'little'))))
+
+
+# ----------------------------------------------------------------------
 # Renderer: IR -> canonical .nasm text
 #
 # The rules here are the normative "canonical rendering v1" of
@@ -794,7 +990,16 @@ def expand(src: str, *, pretty: bool = False) -> str:
 
 def _cli(argv):
     pretty = '--pretty' in argv
+    from_jam = '--from-jam' in argv
     paths = [a for a in argv[1:] if not a.startswith('--')]
+    if from_jam:
+        if not paths:
+            print('--from-jam requires a .jam file path', file=sys.stderr)
+            sys.exit(2)
+        for p in paths:
+            with open(p, 'rb') as f:
+                sys.stdout.write(nasm_from_jam(f.read()))
+        return
     if paths:
         for p in paths:
             with open(p) as f:
