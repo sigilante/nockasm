@@ -1,0 +1,3 @@
+[toolchain]
+# nockvm needs the nightly the nockchain workspace pins (cold_path etc.)
+channel = "nightly-2026-04-03"

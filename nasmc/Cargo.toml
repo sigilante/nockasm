@@ -1,0 +1,22 @@
+[package]
+name = "nasmc"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sigilante"]
+description = "Nockasm compiler: legible Nock assembly to Nock formulas, as a NockApp"
+license = "MIT"
+
+[[bin]]
+name = "nasmc"
+path = "src/main.rs"
+
+[dependencies]
+nockapp = { git = "https://github.com/nockchain/nockchain.git", rev = "6d29078e69b64febabe3d8d20a64c06b969a16ed" }
+nockvm = { git = "https://github.com/nockchain/nockchain.git", rev = "6d29078e69b64febabe3d8d20a64c06b969a16ed" }
+nockvm_macros = { git = "https://github.com/nockchain/nockchain.git", rev = "6d29078e69b64febabe3d8d20a64c06b969a16ed" }
+
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+opt-level = 3
