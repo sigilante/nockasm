@@ -229,6 +229,7 @@ python test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from d
 python test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
 python test_render.py      # target-IR round-trip law + render idempotence
 python test_lift.py        # jam/cue vectors + lift soundness, 69 cases
+python test_desk.py        # on-ship test arms via urbit eval shim
 ```
 
 `test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`
