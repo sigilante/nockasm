@@ -320,7 +320,8 @@ Two tiers, both optional, neither in the IR:
 | M0.5 | `jam`/`cue`, the deterministic `lift`, `nasm-from-jam` + CLI, soundness + parity tests | nockasm | **done** |
 | M1 | Jock backend: `emit : typed-ast -> nasm` behind a flag; differential CI vs legacy codegen (bit-identical nouns); `.nasm` artifacts in review | jock-lang | design |
 | M2 | The L2 decision, from M1's artifacts; if gated in: the frozen macro batch + benchmark-rewrite acceptance | nockasm | gated |
-| M3 | Provenance comments, `%spot` debug mode, `%nasm` clay mark | both | design |
+| M3 | Provenance comments, `%spot` debug mode | both | design |
+| — | `%nasm` clay mark + hoonc usage patterns (`doc/nasm-mark.md`) | nockasm | **done** (first-class hoonc patch proposed) |
 
 M0 is useful with no Jock buy-in. Everything Jock-side rides behind a
 flag until the differential CI is green.
