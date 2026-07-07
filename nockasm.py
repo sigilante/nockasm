@@ -124,7 +124,7 @@ import re
 import sys
 from typing import Union, Tuple, Dict, List, Optional, Any
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 # Version of the target-IR contract: the $nasm node set, the lowering
 # equations, and the canonical rendering rules. Append-only.

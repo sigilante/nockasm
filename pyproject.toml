@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nockasm"
-version = "1.1.1"
+version = "1.2.0"
 description = "A thin macro expander from Nock Assembly to canonical Nock 4K, with a Jupyter kernel"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -22,4 +22,15 @@ nockasm-kernel-install = "nockasm_kernel.install:main"
 include = [
     "nockasm.py",
     "nockasm_kernel/**",
+]
+
+# Keep the sdist to the python package: the repo also carries the Hoon
+# desk, the nasmc NockApp (with a large bootstrap jam and a symlink),
+# and benchmarks, none of which belong in the PyPI artifact.
+[tool.hatch.build.targets.sdist]
+include = [
+    "nockasm.py",
+    "nockasm_kernel/**",
+    "README.md",
+    "pyproject.toml",
 ]
