@@ -107,6 +107,11 @@ a representative subset for the on-ship test framework:
 > -test %/tests/lib/nockasm ~
 ```
 
+Both implementations also expose the parsed AST as a versioned compiler
+target IR — `parse` / `lower` / `render`, with `render` byte-identical
+across the two and governed by the round-trip law
+`expand(render(x)) == lower(x)`. See `doc/compiler-target.md`.
+
 ## Structural macros
 
 ### `#let .name = VALUE in BODY`
@@ -213,6 +218,7 @@ python test_nockasm.py     # unit tests, 55 cases
 python test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
 python test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
 python test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
+python test_render.py      # target-IR round-trip law + render idempotence
 ```
 
 `test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`

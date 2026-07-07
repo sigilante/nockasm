@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 
-from nockasm import expand_to_noun
+from nockasm import expand_to_noun, parse, render
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, 'desk', 'lib', 'nockasm.hoon')
@@ -166,15 +166,16 @@ def build_eval_input() -> str:
     case_lines = []
     for name, src in good:
         want = hoon_noun(expand_to_noun(src))
+        wren = hoon_cord(render(*parse(src)))
         case_lines.append(
-            f'      [{hoon_cord(name)} {hoon_cord(src)} {want}]')
+            f'      [{hoon_cord(name)} {hoon_cord(src)} {want} {wren}]')
     bad_lines = [
         f'      [{hoon_cord(name)} {hoon_cord(src)}]' for name, src in BAD
     ]
     with open(LIB) as f:
         lib = f.read()
     harness = f"""
-=/  cases=(list [name=@t src=@t want=*])
+=/  cases=(list [name=@t src=@t want=* wren=@t])
   :~
 {chr(10).join(case_lines)}
   ==
@@ -185,12 +186,18 @@ def build_eval_input() -> str:
 =/  fails=(list [@t @t])
   ;:  weld
     %+  murn  cases
-    |=  [name=@t src=@t want=*]
+    |=  [name=@t src=@t want=* wren=@t]
     ^-  (unit [@t @t])
     =/  res  (mule |.((expand src)))
     ?:  ?=(%| -.res)  `[name 'crashed']
-    ?:  =(p.res want)  ~
-    `[name 'mismatch']
+    ?.  =(p.res want)  `[name 'mismatch']
+    =/  ren  (mule |.((render (parse src))))
+    ?:  ?=(%| -.ren)  `[name 'render-crashed']
+    ?.  =(p.ren wren)  `[name 'render-mismatch']
+    =/  rtr  (mule |.((expand p.ren)))
+    ?:  ?=(%| -.rtr)  `[name 'roundtrip-crashed']
+    ?.  =(p.rtr want)  `[name 'roundtrip-mismatch']
+    ~
   ::
     %+  murn  bads
     |=  [name=@t src=@t]
@@ -215,7 +222,8 @@ def main():
     out = proc.stdout + proc.stderr
     if 'nockasm-all-ok' in out:
         n_good = len(GOOD) + len(benchmark_cases())
-        print(f'ok: {n_good} expansion cases match the python oracle, '
+        print(f'ok: {n_good} expansion cases match the python oracle '
+              f'(expand + render parity + round-trip), '
               f'{len(BAD)} error cases crash as expected')
         return 0
     print('FAIL: hoon output did not match the oracle')

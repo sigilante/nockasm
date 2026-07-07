@@ -78,6 +78,25 @@ API
       Returns the Python nested-tuple noun directly, for in-process use
       (e.g., feeding pinochle without an intermediate string round-trip).
 
+Target IR (see doc/compiler-target.md)
+======================================
+
+  The parsed AST doubles as a compiler target IR, versioned by
+  NASM_VERSION. A compiler emits (schema, ast) pairs and uses:
+
+  parse(src) -> (schema, ast)
+      Source to IR. schema is None, a '.name' string, or a nested
+      2-tuple; ast is a Node tree.
+
+  lower(schema, ast) -> Noun
+      IR to canonical Nock.
+
+  render(schema, ast) -> str
+      IR to canonical .nasm text. Deterministic: the round-trip law
+      expand_to_noun(render(s, a)) == lower(s, a) holds for every
+      well-formed IR value, and rendering is idempotent through parse.
+      The Hoon implementation renders byte-identically.
+
 Discipline
 ==========
 
@@ -92,6 +111,10 @@ import sys
 from typing import Union, Tuple, Dict, List, Optional, Any
 
 __version__ = "1.1.1"
+
+# Version of the target-IR contract: the $nasm node set, the lowering
+# equations, and the canonical rendering rules. Append-only.
+NASM_VERSION = 1
 
 
 # ----------------------------------------------------------------------
@@ -589,8 +612,171 @@ def print_noun(n: Noun, pretty: bool = False) -> str:
 
 
 # ----------------------------------------------------------------------
+# Renderer: IR -> canonical .nasm text
+#
+# The rules here are the normative "canonical rendering v1" of
+# doc/compiler-target.md and must match desk/lib/nockasm.hoon
+# byte-for-byte. Every layout decision is a pure function of the IR
+# value and the current indent; nothing remembers source spelling.
+# ----------------------------------------------------------------------
+
+_WIDTH = 76
+
+
+def _dotted(n: int) -> str:
+    """Decimal with dots every three digits, matching the reader."""
+    s = str(n)
+    groups = []
+    while len(s) > 3:
+        groups.insert(0, s[-3:])
+        s = s[:-3]
+    groups.insert(0, s)
+    return '.'.join(groups)
+
+
+def _atom_text(n: int) -> str:
+    """Cord form iff >=2 bytes, all printable ASCII, no quote; else
+    dotted decimal."""
+    if n >= 256:
+        bs = n.to_bytes((n.bit_length() + 7) // 8, 'little')
+        if all(0x20 <= b <= 0x7e and b != 0x27 for b in bs):
+            return "'" + bs.decode('ascii') + "'"
+    return _dotted(n)
+
+
+def _atom_value(e: Node) -> int:
+    if isinstance(e, IntAtom):
+        return e.n
+    return cord_to_nat(e.s)
+
+
+def _schema_text(s) -> str:
+    """Schemas always render wide; right spines flatten."""
+    if isinstance(s, str):
+        return s
+    elems = []
+    cur = s
+    while isinstance(cur, tuple):
+        elems.append(cur[0])
+        cur = cur[1]
+    elems.append(cur)
+    return '{' + ' '.join(_schema_text(x) for x in elems) + '}'
+
+
+def _wide(e: Node):
+    """Single-line form, or None (#let / #match have no wide form)."""
+    if isinstance(e, (IntAtom, CordAtom)):
+        return _atom_text(_atom_value(e))
+    if isinstance(e, AxisRef):
+        return e.name
+    if isinstance(e, RawCell):
+        parts = [_wide(x) for x in e.elems]
+        if any(p is None for p in parts):
+            return None
+        return '[' + ' '.join(parts) + ']'
+    if isinstance(e, OpApp):
+        if not e.args:
+            return '(' + e.op + ')'
+        parts = [_wide(x) for x in e.args]
+        if any(p is None for p in parts):
+            return None
+        return '(' + e.op + ' ' + ' '.join(parts) + ')'
+    return None
+
+
+def _rend_case(pat, body, ind: int):
+    """One #match arm at indent ind; pat None means the _ default."""
+    pad = ' ' * ind
+    pw = '_' if pat is None else _wide(pat)
+    bw = _wide(body)
+    if pw is not None and bw is not None:
+        line = pad + pw + ' => ' + bw
+        if len(line) <= _WIDTH:
+            return [line]
+    if pw is not None and len(pad + pw + ' =>') <= _WIDTH:
+        return [pad + pw + ' =>'] + _rend(body, ind + 2, 0)
+    pl = [pad + '_'] if pat is None else _rend(pat, ind, 3)
+    pl[-1] += ' =>'
+    return pl + _rend(body, ind + 2, 0)
+
+
+def _rend(e: Node, ind: int, res: int):
+    """Render e at indent ind as a list of lines (indent included).
+
+    res is the reserve: how many characters an enclosing form will
+    append to this expression's final line (closing delimiters), so
+    that width decisions account for them and no emitted line exceeds
+    _WIDTH."""
+    pad = ' ' * ind
+    w = _wide(e)
+    if w is not None and ind + len(w) + res <= _WIDTH:
+        return [pad + w]
+    if isinstance(e, RawCell):
+        # [ first
+        #   rest ]  -- "[ " is two columns, so continuations align
+        first = _rend(e.elems[0], ind + 2, 0)
+        out = [pad + '[ ' + first[0][ind + 2:]] + first[1:]
+        for el in e.elems[1:-1]:
+            out += _rend(el, ind + 2, 0)
+        out += _rend(e.elems[-1], ind + 2, res + 1)
+        out[-1] += ']'
+        return out
+    if isinstance(e, OpApp):
+        if not e.args:
+            return [pad + '(' + e.op + ')']
+        out = [pad + '(' + e.op]
+        for a in e.args[:-1]:
+            out += _rend(a, ind + 2, 0)
+        out += _rend(e.args[-1], ind + 2, res + 1)
+        out[-1] += ')'
+        return out
+    if isinstance(e, LetForm):
+        head = pad + '#let ' + e.name + ' ='
+        vw = _wide(e.value)
+        if vw is not None and len(head + ' ' + vw + ' in') <= _WIDTH:
+            out = [head + ' ' + vw + ' in']
+        else:
+            out = [head] + _rend(e.value, ind + 2, 0) + [pad + 'in']
+        return out + _rend(e.body, ind, res)
+    if isinstance(e, MatchForm):
+        sw = _wide(e.scrutinee)
+        if sw is not None and len(pad + '#match ' + sw + ' {') <= _WIDTH:
+            out = [pad + '#match ' + sw + ' {']
+        else:
+            out = ([pad + '#match'] + _rend(e.scrutinee, ind + 2, 0)
+                   + [pad + '{'])
+        for pat, body in e.cases:
+            out += _rend_case(pat, body, ind + 2)
+        out += _rend_case(None, e.default, ind + 2)
+        out.append(pad + '}')
+        return out
+    # atoms and axis refs always have a fitting-or-not wide form; emit it
+    return [pad + w]
+
+
+# ----------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------
+
+def parse(src: str):
+    """Source -> (schema, ast). The IR half of the target contract."""
+    toks = tokenize(src)
+    return Parser(toks).parse_program()
+
+
+def lower(schema, ast: Node) -> Noun:
+    """IR -> canonical Nock noun."""
+    return Expander().expand_program(schema, ast)
+
+
+def render(schema, ast: Node) -> str:
+    """IR -> canonical .nasm text (see module docstring for the law)."""
+    lines = []
+    if schema is not None:
+        lines.append(':subject ' + _schema_text(schema))
+    lines += _rend(ast, 0, 0)
+    return '\n'.join(lines) + '\n'
+
 
 def expand_to_noun(src: str) -> Noun:
     toks = tokenize(src)

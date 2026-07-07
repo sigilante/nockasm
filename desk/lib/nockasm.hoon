@@ -12,6 +12,15 @@
 ::      > .*([10 41 99] (expand:nasm ':subject {.a .b} .b'))
 ::      [42 99]
 ::
+::    as a compiler target (doc/compiler-target.md): $nasm is a
+::    versioned public IR. +parse takes source to IR; +lower takes IR
+::    to canonical nock; +render takes IR to canonical .nasm text,
+::    byte-identical to the python renderer, under the round-trip law
+::    (expand (render sch ast)) === (lower sch ast).
+::
+::      > (render:nasm (parse:nasm ':subject {.a .b}  (%eq  .a  .b)'))
+::      ':subject {.a .b}\0a(%eq .a .b)\0a'
+::
 ::    syntax:
 ::      ; comments to end-of-line
 ::
@@ -400,4 +409,224 @@
     %hintd    ?>  ?=([* * * ~] as)
               [11 [(expa i.as axes) (form i.t.as axes)] (form i.t.t.as axes)]
   ==
+::
++|  %target
+::
+::    the compiler-target contract (doc/compiler-target.md): $nasm as
+::    a versioned IR, +lower to canonical nock, +render to canonical
+::    .nasm text. the round-trip law, checked by the differential
+::    suite against the python implementation:
+::
+::      (expand (render sch ast))  ===  (lower sch ast)
+::
+::    +render is byte-identical to the python renderer: every layout
+::    decision is a pure function of the IR value, the indent, and
+::    the reserve (characters an enclosing form will append to the
+::    final line), with a 76-column limit.
+::
+::  +nasm-version: version of the IR node set, lowering equations,
+::  and canonical rendering rules. append-only.
+::
+++  nasm-version  1
+::  +lower: IR -> canonical nock formula
+::
+++  lower
+  |=  [sch=(unit sema) ast=nasm]
+  ^-  *
+  (expa ast ?~(sch ~ (sch-axes u.sch 1)))
+::  +render: IR -> canonical .nasm source
+::
+++  render
+  |=  [sch=(unit sema) ast=nasm]
+  ^-  @t
+  =/  lines=(list tape)
+    %+  weld
+      ^-  (list tape)
+      ?~(sch ~ [(weld ":subject " (sema-text u.sch)) ~])
+    (rend ast 0 0)
+  (crip (zing (turn lines |=(t=tape (snoc t '\0a')))))
+::  +sema-text: schemas always render wide; right spines flatten
+::
+++  sema-text
+  |=  s=sema
+  ^-  tape
+  ?:  ?=(%leaf -.s)
+    ['.' (trip p.s)]
+  =/  elems
+    =/  cur=sema  s
+    =|  acc=(list sema)
+    |-  ^-  (list sema)
+    ?.  ?=(%pair -.cur)  (flop `(list sema)`[cur acc])
+    $(acc [p.cur acc], cur q.cur)
+  :(weld "\{" (join-tapes " " (turn elems sema-text)) "}")
+::  +atom-text: cord form iff >=2 bytes, all printable ascii, no
+::  quote; else dotted decimal
+::
+++  atom-text
+  |=  n=@
+  ^-  tape
+  ?:  ?&  (gte n 256)
+          %+  levy  (trip n)
+          |=(c=@tD &((gte c 32) (lte c 126) !=(c 39)))
+      ==
+    "'{(trip n)}'"
+  (dotted n)
+::  +dotted: decimal with dots every three digits
+::
+++  dotted
+  |=  n=@
+  ^-  tape
+  %-  regroup
+  ?:  =(0 n)  "0"
+  =|  acc=tape
+  |-  ^-  tape
+  ?:  =(0 n)  acc
+  $(acc [(add '0' (mod n 10)) acc], n (div n 10))
+++  regroup
+  |=  s=tape
+  ^-  tape
+  =/  r  (flop s)
+  =|  out=tape
+  =/  i  0
+  |-  ^-  tape
+  ?~  r  out
+  =?  out  &(!=(i 0) =(0 (mod i 3)))  ['.' out]
+  $(out [i.r out], r t.r, i +(i))
+::  +wide: single-line form, or ~ (#let / #match have no wide form)
+::
+++  wide
+  |=  e=nasm
+  ^-  (unit tape)
+  ?-  -.e
+    %atom  `(atom-text p.e)
+    %axis  `['.' (trip p.e)]
+    %cell
+      ?~  ws=(wide-all p.e)  ~
+      `:(weld "[" (join-tapes " " u.ws) "]")
+    %op
+      ?~  q.e  `:(weld "(%" (trip p.e) ")")
+      ?~  ws=(wide-all q.e)  ~
+      `:(weld "(%" (trip p.e) " " (join-tapes " " u.ws) ")")
+    %let    ~
+    %match  ~
+  ==
+++  wide-all
+  |=  l=(list nasm)
+  ^-  (unit (list tape))
+  ?~  l  `~
+  =/  w  (wide i.l)
+  ?~  w  ~
+  =/  r  $(l t.l)
+  ?~  r  ~
+  `[u.w u.r]
+::  +rend: render at an indent as a list of lines (indent included).
+::  res is the reserve: characters an enclosing form will append to
+::  this expression's final line (closing delimiters), so that width
+::  decisions account for them and no emitted line exceeds 76.
+::
+++  rend
+  |=  [e=nasm ind=@ud res=@ud]
+  ^-  (list tape)
+  =/  pad  (reap ind ' ')
+  =/  w  (wide e)
+  ?:  &(?=(^ w) (lte :(add ind (lent u.w) res) 76))
+    [(weld pad u.w) ~]
+  ?-  -.e
+    %atom  [(weld pad (atom-text p.e)) ~]
+    %axis  [(weld pad ['.' (trip p.e)]) ~]
+  ::
+    %cell
+      ?>  ?=([* * *] p.e)
+      =/  fst  (rend i.p.e (add ind 2) 0)
+      ?>  ?=(^ fst)
+      =/  l0  :(weld pad "[ " (slag (add ind 2) i.fst))
+      %+  amend-last
+        %+  weld  [l0 t.fst]
+        =/  els  `(list nasm)`t.p.e
+        |-  ^-  (list tape)
+        ?~  els  ~
+        ?~  t.els  (rend i.els (add ind 2) +(res))
+        (weld (rend i.els (add ind 2) 0) $(els t.els))
+      "]"
+  ::
+    %op
+      ?~  q.e  [:(weld pad "(%" (trip p.e) ")") ~]
+      %+  amend-last
+        %+  weld  [:(weld pad "(%" (trip p.e)) ~]
+        =/  args  `(list nasm)`q.e
+        |-  ^-  (list tape)
+        ?~  args  ~
+        ?~  t.args  (rend i.args (add ind 2) +(res))
+        (weld (rend i.args (add ind 2) 0) $(args t.args))
+      ")"
+  ::
+    %let
+      =/  head  :(weld pad "#let ." (trip p.e) " =")
+      =/  one=(unit tape)
+        ?~  vw=(wide q.e)  ~
+        `:(weld head " " u.vw " in")
+      %+  weld
+        ^-  (list tape)
+        ?:  &(?=(^ one) (lte (lent u.one) 76))
+          [u.one ~]
+        ;:  weld
+          [head ~]
+          (rend q.e (add ind 2) 0)
+          [(weld pad "in") ~]
+        ==
+      (rend r.e ind res)
+  ::
+    %match
+      =/  one=(unit tape)
+        ?~  sw=(wide p.e)  ~
+        `:(weld pad "#match " u.sw " \{")
+      =/  head=(list tape)
+        ?:  &(?=(^ one) (lte (lent u.one) 76))
+          [u.one ~]
+        ;:  weld
+          [(weld pad "#match") ~]
+          (rend p.e (add ind 2) 0)
+          [(weld pad "\{") ~]
+        ==
+      ;:  weld
+        head
+        =/  cs  `(list mcas)`q.e
+        |-  ^-  (list tape)
+        ?~  cs  ~
+        (weld (rend-case `p.i.cs q.i.cs (add ind 2)) $(cs t.cs))
+        (rend-case ~ r.e (add ind 2))
+        [(weld pad "}") ~]
+      ==
+  ==
+::  +rend-case: one #match arm; ~ pattern means the _ default
+::
+++  rend-case
+  |=  [pat=(unit nasm) bod=nasm ind=@ud]
+  ^-  (list tape)
+  =/  pad  (reap ind ' ')
+  =/  pw=(unit tape)  ?~(pat `"_" (wide u.pat))
+  =/  bw  (wide bod)
+  ?:  ?&  ?=(^ pw)  ?=(^ bw)
+          (lte (lent :(weld pad u.pw " => " u.bw)) 76)
+      ==
+    [:(weld pad u.pw " => " u.bw) ~]
+  ?:  &(?=(^ pw) (lte (lent :(weld pad u.pw " =>")) 76))
+    (weld [:(weld pad u.pw " =>") ~] (rend bod (add ind 2) 0))
+  =/  pl  ?~(pat [(weld pad "_") ~] (rend u.pat ind 3))
+  (weld (amend-last pl " =>") (rend bod (add ind 2) 0))
+::  +amend-last: append a suffix to the final line
+::
+++  amend-last
+  |=  [ls=(list tape) suf=tape]
+  ^-  (list tape)
+  ?~  ls  [suf ~]
+  ?~  t.ls  [(weld i.ls suf) ~]
+  [i.ls $(ls t.ls)]
+++  join-tapes
+  |=  [sep=tape ts=(list tape)]
+  ^-  tape
+  ?~  ts  ~
+  |-  ^-  tape
+  ?~  t.ts  i.ts
+  :(weld i.ts sep $(ts t.ts))
 --
