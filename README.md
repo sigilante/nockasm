@@ -59,7 +59,14 @@ At the CLI:
 python -m nockasm program.nasm           # canonical flat
 python -m nockasm --pretty program.nasm  # explicit binary cells
 echo "(%inc (%self))" | python -m nockasm
+python -m nockasm --from-jam formula.jam # jammed formula -> .nasm source
 ```
+
+`--from-jam` cues a jamfile and lifts the noun back to canonical
+Nockasm: named ops wherever Nock's positional grammar proves the
+shape, structural raw cells everywhere else, no guessed intent.
+Sound by construction: the emitted source re-expands to the exact
+jammed noun.
 
 ## Integration with the Nock kernel
 
@@ -106,6 +113,13 @@ a representative subset for the on-ship test framework:
 ```
 > -test %/tests/lib/nockasm ~
 ```
+
+Both implementations also expose the parsed AST as a versioned compiler
+target IR — `parse` / `lower` / `render`, with `render` byte-identical
+across the two and governed by the round-trip law
+`expand(render(x)) == lower(x)` — plus `jam` / `cue` / `lift` /
+`nasm-from-jam` for reading jammed formulas back to source under the
+soundness law `lower(lift(f)) == f`. See `doc/compiler-target.md`.
 
 ## Structural macros
 
@@ -213,6 +227,9 @@ python test_nockasm.py     # unit tests, 55 cases
 python test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
 python test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
 python test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
+python test_render.py      # target-IR round-trip law + render idempotence
+python test_lift.py        # jam/cue vectors + lift soundness, 69 cases
+python test_desk.py        # on-ship test arms via urbit eval shim
 ```
 
 `test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`

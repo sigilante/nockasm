@@ -96,6 +96,34 @@
     !>(`*`[4 6])
   !>((nock [3 5] (expand ':subject {.a .b}  [(%inc .a) (%inc .b)]')))
 ::
++|  %target
+++  test-lower
+  =/  pr  (parse:nockasm ':subject {.a .b}  (%eq .a .b)')
+  (expect-eq !>(`*`[5 [0 2] 0 3]) !>((lower:nockasm pr)))
+++  test-render-canonical
+  =/  pr  (parse:nockasm ':subject {.a .b}  (%eq  .a  .b)')
+  %+  expect-eq
+    !>(':subject {.a .b}\0a(%eq .a .b)\0a')
+  !>((render:nockasm pr))
+++  test-lift-sound
+  =/  f  `*`[8 [4 0 6] [0 6] [0 2] 0 15]
+  (expect-eq !>(`*`f) !>((lower:nockasm ~ (lift:nockasm f))))
+++  test-nasm-from-jam
+  ::  0x3.2661 is (jam [4 0 1])
+  %+  expect-eq
+    !>('(%inc (%slot 1))\0a')
+  !>((nasm-from-jam:nockasm 0x3.2661))
+++  test-render-roundtrip
+  =/  src
+    '''
+    :subject {.tag .data}
+    #match .tag { 1 => (%inc .data)  _ => 0 }
+    '''
+  =/  pr  (parse:nockasm src)
+  %+  expect-eq
+    !>(`*`(lower:nockasm pr))
+  !>(`*`(expand:nockasm (render:nockasm pr)))
+::
 +|  %errors
 ++  test-unbound-axis
   (expect-fail |.((expand '(%inc .x)')))

@@ -78,6 +78,39 @@ API
       Returns the Python nested-tuple noun directly, for in-process use
       (e.g., feeding pinochle without an intermediate string round-trip).
 
+Target IR (see doc/compiler-target.md)
+======================================
+
+  The parsed AST doubles as a compiler target IR, versioned by
+  NASM_VERSION. A compiler emits (schema, ast) pairs and uses:
+
+  parse(src) -> (schema, ast)
+      Source to IR. schema is None, a '.name' string, or a nested
+      2-tuple; ast is a Node tree.
+
+  lower(schema, ast) -> Noun
+      IR to canonical Nock.
+
+  render(schema, ast) -> str
+      IR to canonical .nasm text. Deterministic: the round-trip law
+      expand_to_noun(render(s, a)) == lower(s, a) holds for every
+      well-formed IR value, and rendering is idempotent through parse.
+      The Hoon implementation renders byte-identically.
+
+  lift(noun) -> ast
+      Read a noun as a formula: the deterministic, zero-heuristic
+      lift. Named ops by Nock's positional grammar; structural raw
+      cells wherever the shape is not a valid formula; no intent
+      claims. Soundness: lower(None, lift(f)) == f for every noun.
+
+  jam(noun) -> int / cue(int) -> noun
+      Urbit noun serialization; a .jam file is the jammed atom's
+      bytes, little-endian.
+
+  nasm_from_jam(data: bytes) -> str
+      Jamfile bytes to canonical .nasm text; also at the CLI:
+      python -m nockasm --from-jam formula.jam
+
 Discipline
 ==========
 
@@ -92,6 +125,10 @@ import sys
 from typing import Union, Tuple, Dict, List, Optional, Any
 
 __version__ = "1.1.1"
+
+# Version of the target-IR contract: the $nasm node set, the lowering
+# equations, and the canonical rendering rules. Append-only.
+NASM_VERSION = 1
 
 
 # ----------------------------------------------------------------------
@@ -589,8 +626,353 @@ def print_noun(n: Noun, pretty: bool = False) -> str:
 
 
 # ----------------------------------------------------------------------
+# Jam and cue: Urbit noun serialization
+#
+# A .jam file is the bytes of a jammed atom, little-endian. cue()
+# inverts jam(). Both follow the canonical bit-level encoding
+# (LSB-first: atom = 0 + mat, cell = 10 + head + tail, backref =
+# 11 + mat of the original tag position).
+# ----------------------------------------------------------------------
+
+def jam(n: Noun) -> int:
+    """Serialize a noun to an atom."""
+    out = 0
+    pos = 0
+    memo: Dict[Noun, int] = {}
+
+    def emit(width: int, bits: int = 0):
+        nonlocal out, pos
+        out |= bits << pos
+        pos += width
+
+    def mat(v: int):
+        if v == 0:
+            emit(1, 1)
+            return
+        b = v.bit_length()
+        c = b.bit_length()
+        emit(c, 0)                              # c zeros
+        emit(1, 1)                              # stop bit
+        emit(c - 1, b & ((1 << (c - 1)) - 1))   # length, high bit implicit
+        emit(b, v)
+
+    def go(n: Noun):
+        ref = memo.get(n)
+        if ref is not None:
+            if isinstance(n, int) and n.bit_length() <= ref.bit_length():
+                emit(1, 0)
+                mat(n)
+                return
+            emit(2, 0b11)
+            mat(ref)
+            return
+        memo[n] = pos
+        if isinstance(n, int):
+            emit(1, 0)
+            mat(n)
+        else:
+            emit(2, 0b01)
+            go(n[0])
+            go(n[1])
+
+    go(n)
+    return out
+
+
+def cue(a: int) -> Noun:
+    """Deserialize a jammed atom back to a noun."""
+    memo: Dict[int, Noun] = {}
+
+    def bit(i: int) -> int:
+        return (a >> i) & 1
+
+    def rub(i: int):
+        z = 0
+        while bit(i + z) == 0:
+            z += 1
+        if z == 0:
+            return 0, i + 1
+        j = i + z + 1
+        lbits = (a >> j) & ((1 << (z - 1)) - 1)
+        length = lbits | (1 << (z - 1))
+        j += z - 1
+        return (a >> j) & ((1 << length) - 1), j + length
+
+    def go(i: int):
+        start = i
+        if bit(i) == 0:
+            v, j = rub(i + 1)
+            memo[start] = v
+            return v, j
+        if bit(i + 1) == 0:
+            h, j = go(i + 2)
+            t, k = go(j)
+            memo[start] = (h, t)
+            return (h, t), k
+        r, j = rub(i + 2)
+        return memo[r], j
+
+    n, _ = go(0)
+    return n
+
+
+# ----------------------------------------------------------------------
+# Lift: Nock noun -> IR
+#
+# The deterministic, zero-heuristic lift (doc/compiler-target.md).
+# The caller asserts the noun is a formula; positions follow Nock's
+# grammar. Where a shape does not match a valid formula (an atom in a
+# formula position, an opcode head above 11), the node falls back to
+# a structural raw cell -- always sound, never sugared. No intent is
+# ever claimed: constants are %const (never %arm), axes are %slot
+# (never the core aliases), and no macro skeleton is recognized.
+#
+# Soundness law: lower(None, lift(f)) == f for every noun f.
+# ----------------------------------------------------------------------
+
+def _noun_ast(n: Noun) -> Node:
+    """A noun as pure structure: atoms and right-spine-flattened
+    raw cells, no formula reading."""
+    if isinstance(n, int):
+        return IntAtom(n)
+    elems = []
+    cur = n
+    while isinstance(cur, tuple):
+        elems.append(_noun_ast(cur[0]))
+        cur = cur[1]
+    elems.append(IntAtom(cur))
+    return RawCell(elems)
+
+
+def _cell(x) -> bool:
+    return isinstance(x, tuple)
+
+
+def lift(n: Noun) -> Node:
+    """Read a noun as a formula; see the soundness law above."""
+    if isinstance(n, int):
+        return IntAtom(n)
+    h, t = n
+    if _cell(h):
+        # cons-formula: both halves are formula positions
+        return RawCell([lift(h), lift(t)])
+    if h == 0:
+        if isinstance(t, int):
+            return OpApp('%slot', [IntAtom(t)])
+    elif h == 1:
+        return OpApp('%const', [_noun_ast(t)])
+    elif h == 2:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%eval', [lift(t[0]), lift(t[1])])
+    elif h == 3:
+        if _cell(t):
+            return OpApp('%isa', [lift(t)])
+    elif h == 4:
+        if _cell(t):
+            return OpApp('%inc', [lift(t)])
+    elif h == 5:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%eq', [lift(t[0]), lift(t[1])])
+    elif h == 6:
+        if (_cell(t) and _cell(t[0]) and _cell(t[1])
+                and _cell(t[1][0]) and _cell(t[1][1])):
+            return OpApp('%if', [lift(t[0]), lift(t[1][0]),
+                                 lift(t[1][1])])
+    elif h == 7:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%comp', [lift(t[0]), lift(t[1])])
+    elif h == 8:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%push', [lift(t[0]), lift(t[1])])
+    elif h == 9:
+        if _cell(t) and isinstance(t[0], int) and _cell(t[1]):
+            return OpApp('%call', [IntAtom(t[0]), lift(t[1])])
+    elif h == 10:
+        if (_cell(t) and _cell(t[0]) and isinstance(t[0][0], int)
+                and _cell(t[0][1]) and _cell(t[1])):
+            return OpApp('%edit', [IntAtom(t[0][0]), lift(t[0][1]),
+                                   lift(t[1])])
+    elif h == 11:
+        if _cell(t) and isinstance(t[0], int) and _cell(t[1]):
+            return OpApp('%hint', [IntAtom(t[0]), lift(t[1])])
+        if (_cell(t) and _cell(t[0]) and _cell(t[0][1])
+                and _cell(t[1])):
+            return OpApp('%hintd', [_noun_ast(t[0][0]), lift(t[0][1]),
+                                    lift(t[1])])
+    return _noun_ast(n)
+
+
+def nasm_from_jam(data: bytes) -> str:
+    """Jamfile bytes -> canonical .nasm text for the jammed formula."""
+    return render(None, lift(cue(int.from_bytes(data, 'little'))))
+
+
+# ----------------------------------------------------------------------
+# Renderer: IR -> canonical .nasm text
+#
+# The rules here are the normative "canonical rendering v1" of
+# doc/compiler-target.md and must match desk/lib/nockasm.hoon
+# byte-for-byte. Every layout decision is a pure function of the IR
+# value and the current indent; nothing remembers source spelling.
+# ----------------------------------------------------------------------
+
+_WIDTH = 76
+
+
+def _dotted(n: int) -> str:
+    """Decimal with dots every three digits, matching the reader."""
+    s = str(n)
+    groups = []
+    while len(s) > 3:
+        groups.insert(0, s[-3:])
+        s = s[:-3]
+    groups.insert(0, s)
+    return '.'.join(groups)
+
+
+def _atom_text(n: int) -> str:
+    """Cord form iff >=2 bytes, all printable ASCII, no quote; else
+    dotted decimal."""
+    if n >= 256:
+        bs = n.to_bytes((n.bit_length() + 7) // 8, 'little')
+        if all(0x20 <= b <= 0x7e and b != 0x27 for b in bs):
+            return "'" + bs.decode('ascii') + "'"
+    return _dotted(n)
+
+
+def _atom_value(e: Node) -> int:
+    if isinstance(e, IntAtom):
+        return e.n
+    return cord_to_nat(e.s)
+
+
+def _schema_text(s) -> str:
+    """Schemas always render wide; right spines flatten."""
+    if isinstance(s, str):
+        return s
+    elems = []
+    cur = s
+    while isinstance(cur, tuple):
+        elems.append(cur[0])
+        cur = cur[1]
+    elems.append(cur)
+    return '{' + ' '.join(_schema_text(x) for x in elems) + '}'
+
+
+def _wide(e: Node):
+    """Single-line form, or None (#let / #match have no wide form)."""
+    if isinstance(e, (IntAtom, CordAtom)):
+        return _atom_text(_atom_value(e))
+    if isinstance(e, AxisRef):
+        return e.name
+    if isinstance(e, RawCell):
+        parts = [_wide(x) for x in e.elems]
+        if any(p is None for p in parts):
+            return None
+        return '[' + ' '.join(parts) + ']'
+    if isinstance(e, OpApp):
+        if not e.args:
+            return '(' + e.op + ')'
+        parts = [_wide(x) for x in e.args]
+        if any(p is None for p in parts):
+            return None
+        return '(' + e.op + ' ' + ' '.join(parts) + ')'
+    return None
+
+
+def _rend_case(pat, body, ind: int):
+    """One #match arm at indent ind; pat None means the _ default."""
+    pad = ' ' * ind
+    pw = '_' if pat is None else _wide(pat)
+    bw = _wide(body)
+    if pw is not None and bw is not None:
+        line = pad + pw + ' => ' + bw
+        if len(line) <= _WIDTH:
+            return [line]
+    if pw is not None and len(pad + pw + ' =>') <= _WIDTH:
+        return [pad + pw + ' =>'] + _rend(body, ind + 2, 0)
+    pl = [pad + '_'] if pat is None else _rend(pat, ind, 3)
+    pl[-1] += ' =>'
+    return pl + _rend(body, ind + 2, 0)
+
+
+def _rend(e: Node, ind: int, res: int):
+    """Render e at indent ind as a list of lines (indent included).
+
+    res is the reserve: how many characters an enclosing form will
+    append to this expression's final line (closing delimiters), so
+    that width decisions account for them and no emitted line exceeds
+    _WIDTH."""
+    pad = ' ' * ind
+    w = _wide(e)
+    if w is not None and ind + len(w) + res <= _WIDTH:
+        return [pad + w]
+    if isinstance(e, RawCell):
+        # [ first
+        #   rest ]  -- "[ " is two columns, so continuations align
+        first = _rend(e.elems[0], ind + 2, 0)
+        out = [pad + '[ ' + first[0][ind + 2:]] + first[1:]
+        for el in e.elems[1:-1]:
+            out += _rend(el, ind + 2, 0)
+        out += _rend(e.elems[-1], ind + 2, res + 1)
+        out[-1] += ']'
+        return out
+    if isinstance(e, OpApp):
+        if not e.args:
+            return [pad + '(' + e.op + ')']
+        out = [pad + '(' + e.op]
+        for a in e.args[:-1]:
+            out += _rend(a, ind + 2, 0)
+        out += _rend(e.args[-1], ind + 2, res + 1)
+        out[-1] += ')'
+        return out
+    if isinstance(e, LetForm):
+        head = pad + '#let ' + e.name + ' ='
+        vw = _wide(e.value)
+        if vw is not None and len(head + ' ' + vw + ' in') <= _WIDTH:
+            out = [head + ' ' + vw + ' in']
+        else:
+            out = [head] + _rend(e.value, ind + 2, 0) + [pad + 'in']
+        return out + _rend(e.body, ind, res)
+    if isinstance(e, MatchForm):
+        sw = _wide(e.scrutinee)
+        if sw is not None and len(pad + '#match ' + sw + ' {') <= _WIDTH:
+            out = [pad + '#match ' + sw + ' {']
+        else:
+            out = ([pad + '#match'] + _rend(e.scrutinee, ind + 2, 0)
+                   + [pad + '{'])
+        for pat, body in e.cases:
+            out += _rend_case(pat, body, ind + 2)
+        out += _rend_case(None, e.default, ind + 2)
+        out.append(pad + '}')
+        return out
+    # atoms and axis refs always have a fitting-or-not wide form; emit it
+    return [pad + w]
+
+
+# ----------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------
+
+def parse(src: str):
+    """Source -> (schema, ast). The IR half of the target contract."""
+    toks = tokenize(src)
+    return Parser(toks).parse_program()
+
+
+def lower(schema, ast: Node) -> Noun:
+    """IR -> canonical Nock noun."""
+    return Expander().expand_program(schema, ast)
+
+
+def render(schema, ast: Node) -> str:
+    """IR -> canonical .nasm text (see module docstring for the law)."""
+    lines = []
+    if schema is not None:
+        lines.append(':subject ' + _schema_text(schema))
+    lines += _rend(ast, 0, 0)
+    return '\n'.join(lines) + '\n'
+
 
 def expand_to_noun(src: str) -> Noun:
     toks = tokenize(src)
@@ -608,7 +990,16 @@ def expand(src: str, *, pretty: bool = False) -> str:
 
 def _cli(argv):
     pretty = '--pretty' in argv
+    from_jam = '--from-jam' in argv
     paths = [a for a in argv[1:] if not a.startswith('--')]
+    if from_jam:
+        if not paths:
+            print('--from-jam requires a .jam file path', file=sys.stderr)
+            sys.exit(2)
+        for p in paths:
+            with open(p, 'rb') as f:
+                sys.stdout.write(nasm_from_jam(f.read()))
+        return
     if paths:
         for p in paths:
             with open(p) as f:

@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  python:
+    name: python suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install pinochle
+        run: pip install 'pinochle>=1.2.1'
+      - name: unit tests
+        run: python test_nockasm.py
+      - name: end-to-end (pinochle)
+        run: python test_e2e.py
+      - name: benchmark transcriptions
+        run: python test_benchmarks.py
+      - name: target-IR round-trip law
+        run: python test_render.py
+      - name: jam/cue + lift soundness
+        run: if [ -f test_lift.py ]; then python test_lift.py; fi
+
+  hoon:
+    name: hoon differential (urbit eval)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The latest release vere, deliberately unpinned: this suite is
+      # differential against the platform, so a new vere/hoon breaking
+      # it is exactly the signal we want.
+      - name: install vere
+        run: |
+          curl -sL https://urbit.org/install/linux-x86_64/latest -o vere.tgz
+          tar xzf vere.tgz
+          mv vere-v* urbit
+          chmod +x urbit
+          ./urbit --version || true
+      - name: differential suite (expand + render parity + round-trip)
+        run: URBIT_BIN=./urbit python test_hoon.py
+      - name: desk tests under eval shim
+        run: URBIT_BIN=./urbit python test_desk.py
