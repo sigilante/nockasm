@@ -13,28 +13,18 @@ Set NASMC_BIN to the binary (default: nasmc/target/release/nasmc).
 
 import os
 import subprocess
-import sys
 import tempfile
 
 from nockasm import expand, expand_to_noun, jam, lift, parse, render
 from test_hoon import GOOD, benchmark_cases
+from _testkit import Tally
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NASMC = os.environ.get(
     'NASMC_BIN', os.path.join(HERE, 'nasmc', 'target', 'release', 'nasmc'))
 
-PASS = 0
-FAIL = 0
-
-
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f"  ok   {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL {name}  {detail}")
+_t = Tally('nasmc')
+check = _t.expect
 
 
 def run_nasmc(args, timeout=120):
@@ -104,10 +94,8 @@ def main():
         check("error-exit", proc.returncode != 0,
               f"exit {proc.returncode}")
 
-    print()
-    print(f"==> nasmc: {PASS} passed, {FAIL} failed")
-    return 0 if FAIL == 0 else 1
+    _t.done()
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()

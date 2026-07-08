@@ -1,29 +1,12 @@
 """Tests for nockasm. Run with: python test_nockasm.py"""
 
-import sys
-from nockasm import expand, expand_to_noun, peg, cord_to_nat, cell
+from nockasm import expand, peg, cord_to_nat
+from test_hoon import BAD
+from _testkit import Tally
 
-
-PASS = 0
-FAIL = 0
-FAILURES = []
-
-
-def check(name, got, want):
-    global PASS, FAIL
-    if got == want:
-        PASS += 1
-        print(f"  ok   {name}")
-    else:
-        FAIL += 1
-        FAILURES.append((name, got, want))
-        print(f"  FAIL {name}")
-        print(f"       got:  {got!r}")
-        print(f"       want: {want!r}")
-
-
-def section(title):
-    print(f"\n== {title} ==")
+_t = Tally()
+check = _t.check
+section = _t.section
 
 
 # ----------------------------------------------------------------------
@@ -214,34 +197,27 @@ check("worked example",
 section("errors")
 # ----------------------------------------------------------------------
 
-def check_raises(name, fn, exc_type):
-    global PASS, FAIL
-    try:
-        fn()
-        FAIL += 1
-        FAILURES.append((name, "no exception", exc_type))
-        print(f"  FAIL {name}: expected {exc_type.__name__}, got no exception")
-    except exc_type:
-        PASS += 1
-        print(f"  ok   {name}")
-    except Exception as e:
-        FAIL += 1
-        FAILURES.append((name, type(e).__name__, exc_type.__name__))
-        print(f"  FAIL {name}: expected {exc_type.__name__}, got {type(e).__name__}: {e}")
-
-
-check_raises("unbound axis", lambda: expand("(%inc .x)"), NameError)
-check_raises("unknown opcode", lambda: expand("(%nope 1)"), NameError)
-check_raises("wrong arity", lambda: expand("(%inc 1 2)"), TypeError)
-check_raises("match no default",
-             lambda: expand(":subject .x #match .x { 1 => 0 }"),
-             SyntaxError)
-check_raises("trailing tokens",
-             lambda: expand("42 42"),
-             SyntaxError)
+# The negative corpus is shared with the Hoon differential suite
+# (test_hoon.BAD) so both expanders are held to rejecting exactly the
+# same sources. Expected exception types are Python-specific; a case not
+# listed here need only raise *something* — which keeps parity automatic
+# when a new BAD case is added to the shared corpus.
+EXPECTED = {
+    'unbound-axis':     NameError,
+    'unknown-opcode':   NameError,
+    'wrong-arity':      TypeError,
+    'slot-cell-axis':   TypeError,
+    'match-no-default': SyntaxError,
+    'match-dup-default':SyntaxError,
+    'trailing-tokens':  SyntaxError,
+    'let-shadow':       SyntaxError,
+    'dup-schema':       SyntaxError,
+    'raw-cell-one':     SyntaxError,
+    'empty':            SyntaxError,
+}
+for _name, _src in BAD:
+    _t.raises(_name, lambda s=_src: expand(s), EXPECTED.get(_name, Exception))
 
 
 # ----------------------------------------------------------------------
-print()
-print(f"==> {PASS} passed, {FAIL} failed")
-sys.exit(0 if FAIL == 0 else 1)
+_t.done()
