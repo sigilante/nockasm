@@ -7,9 +7,10 @@ Corpus: every expansion case from the differential suite plus the
 benchmark transcriptions (imported from test_hoon).
 """
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import Tally
 from nockasm import parse, lower, render, expand_to_noun, NASM_VERSION
 from test_hoon import GOOD, benchmark_cases
-from _testkit import Tally
 
 _t = Tally('render')
 check = _t.expect

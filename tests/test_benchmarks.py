@@ -12,13 +12,13 @@ import json
 import os
 import sys
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import ROOT, Tally
 from pinochle import nock, parse_noun
 from nockasm import expand
-from _testkit import Tally
 
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-BENCH_DIR = os.path.join(HERE, 'benchmarks')
+BENCH_DIR = os.path.join(ROOT, 'benchmarks')
 
 # pinochle is a direct recursive interpreter; benchmarks like factorial
 # and dec need deeper Python stacks than the default 1000 frames.

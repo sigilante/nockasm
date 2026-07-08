@@ -42,7 +42,7 @@ cargo build --release
 
 ## Testing
 
-`../test_nasmc.py` is the differential suite: every corpus source
+`../tests/test_nasmc.py` is the differential suite: every corpus source
 (unit cases + the urbit/benchmark transcriptions) compiled by nasmc
 must produce a jam byte-identical to `jam(expand_to_noun(src))` from
 the Python oracle — making nasmc the third independent executor of

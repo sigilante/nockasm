@@ -7,9 +7,10 @@ comment-first cell still sets the subject rather than shipping ``#subject`` to
 the assembler.
 """
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import Tally
 from nockasm_kernel.kernel import NockasmKernel
 from pinochle import parse as parse_noun
-from _testkit import Tally
 
 _t = Tally('kernel')
 section = _t.section

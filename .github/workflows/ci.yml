@@ -17,15 +17,15 @@ jobs:
       - name: install pinochle
         run: pip install 'pinochle>=1.2.1'
       - name: unit tests
-        run: python test_nockasm.py
+        run: python tests/test_nockasm.py
       - name: end-to-end (pinochle)
-        run: python test_e2e.py
+        run: python tests/test_e2e.py
       - name: benchmark transcriptions
-        run: python test_benchmarks.py
+        run: python tests/test_benchmarks.py
       - name: target-IR round-trip law
-        run: python test_render.py
+        run: python tests/test_render.py
       - name: jam/cue + lift soundness
-        run: if [ -f test_lift.py ]; then python test_lift.py; fi
+        run: if [ -f tests/test_lift.py ]; then python tests/test_lift.py; fi
 
   hoon:
     name: hoon differential (urbit eval)
@@ -46,11 +46,11 @@ jobs:
           chmod +x urbit
           ./urbit --version || true
       - name: differential suite (expand + render parity + round-trip)
-        run: URBIT_BIN=./urbit python test_hoon.py
+        run: URBIT_BIN=./urbit python tests/test_hoon.py
       - name: desk tests under eval shim
-        run: URBIT_BIN=./urbit python test_desk.py
+        run: URBIT_BIN=./urbit python tests/test_desk.py
       - name: nasm clay mark
-        run: if [ -f test_mark.py ]; then URBIT_BIN=./urbit python test_mark.py; fi
+        run: if [ -f tests/test_mark.py ]; then URBIT_BIN=./urbit python tests/test_mark.py; fi
 
   nasmc:
     name: nasmc differential (nockvm)
@@ -78,4 +78,4 @@ jobs:
           set -o pipefail
           cargo build --release 2>&1 | sed '/package name: .*project_name/,/\^/d'
       - name: differential suite (jam parity vs python oracle)
-        run: python test_nasmc.py
+        run: python tests/test_nasmc.py

@@ -12,7 +12,16 @@ import subprocess
 import sys
 
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))   # the tests/ directory
+ROOT = os.path.dirname(HERE)                          # the repo root
+
+# The suites live in tests/ but import the package at the repo root
+# (nockasm, nockasm_kernel) and read sibling trees (desk/, benchmarks/,
+# nasmc/). Running `python tests/test_x.py` puts tests/ on sys.path, not
+# the root, so put the root there ourselves. Importing _testkit is what
+# pulls this in, which is why every suite imports it before nockasm.
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 # The latest release vere by default; override for a local build. The
 # Hoon suites are differential against the platform, so the binary is
@@ -25,7 +34,7 @@ VERE = os.environ.get(
 
 def desk_file(*parts):
     """Absolute path to a file under the repo's desk/ tree."""
-    return os.path.join(HERE, 'desk', *parts)
+    return os.path.join(ROOT, 'desk', *parts)
 
 
 def run_eval(src, timeout=600):

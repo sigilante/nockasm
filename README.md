@@ -104,7 +104,7 @@ in as a cord, Nock formula out as a noun. The parser is written in the
 ```
 
 The noun is directly usable with `.*` — no text round-trip. The Python
-suite is the conformance oracle: `test_hoon.py` expands every unit-test
+suite is the conformance oracle: `tests/test_hoon.py` expands every unit-test
 source and all five benchmarks through both implementations via
 `urbit eval` and compares nouns bit-for-bit (no ship required; set
 `URBIT_BIN` to your vere binary). `desk/tests/lib/nockasm.hoon` carries
@@ -156,7 +156,7 @@ nasmc --render program.nasm      # canonical formatting to stdout
 nasmc --lift formula.jam         # jamfile back to .nasm source
 ```
 
-`test_nasmc.py` holds it to the same standard as everything else:
+`tests/test_nasmc.py` holds it to the same standard as everything else:
 every corpus jam byte-identical to the Python oracle — a third
 independent executor (CPython, Hoon-on-vere, Hoon-on-nockvm) of the
 same laws. See `nasmc/README.md`.
@@ -262,18 +262,20 @@ cons-formula distribution pattern works as expected:
 
 ## Tests
 
+The suites live in `tests/`; run them from the repo root.
+
 ```bash
-python test_nockasm.py     # unit tests, 55 cases
-python test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
-python test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
-python test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
-python test_render.py      # target-IR round-trip law + render idempotence
-python test_lift.py        # jam/cue vectors + lift soundness, 69 cases
-python test_desk.py        # on-ship test arms via urbit eval shim
-python test_mark.py        # %nasm clay mark grow/grab round-trips
+python tests/test_nockasm.py     # unit tests, 61 cases
+python tests/test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
+python tests/test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
+python tests/test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
+python tests/test_render.py      # target-IR round-trip law + render idempotence
+python tests/test_lift.py        # jam/cue vectors + lift soundness, 69 cases
+python tests/test_desk.py        # on-ship test arms via urbit eval shim
+python tests/test_mark.py        # %nasm clay mark grow/grab round-trips
 ```
 
-`test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`
+`tests/test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`
 from disk and runs each through pinochle. The five benchmarks present
 (`dec`, `add`, `factorial`, `fibonacci`, `ackermann`) are faithful
 transcriptions of `urbit/benchmark/desk/bar/<name>.nock` — each `.nasm`

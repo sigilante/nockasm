@@ -90,9 +90,9 @@ Public arms (`lib/nockasm.hoon`), with Python equivalents in
 (expand (render sch ast))  ===  (lower sch ast)      (bit-identical)
 ```
 
-Checked by `test_render.py` (round-trip + idempotence through parse +
+Checked by `tests/test_render.py` (round-trip + idempotence through parse +
 76-column invariant, over the full corpus including the benchmark
-transcriptions) and by `test_hoon.py` (Hoon `render` output is
+transcriptions) and by `tests/test_hoon.py` (Hoon `render` output is
 **byte-identical** to the Python renderer's, and the Hoon round-trip
 matches, for every corpus case).
 
@@ -176,8 +176,8 @@ reverse). Concretely:
   out-of-band knowledge (debug info), not to a deterministic reader.
 
 Soundness law, enforced over the corpus and the fallback zoo by
-`test_lift.py`, and cross-implementation (byte-identical lifted
-renders, via `test_hoon.py`):
+`tests/test_lift.py`, and cross-implementation (byte-identical lifted
+renders, via `tests/test_hoon.py`):
 
 ```
 (lower ~ (lift f))  ===  f        for every noun f
