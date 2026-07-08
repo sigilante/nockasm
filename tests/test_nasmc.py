@@ -15,13 +15,13 @@ import os
 import subprocess
 import tempfile
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import ROOT, Tally
 from nockasm import expand, expand_to_noun, jam, lift, parse, render
 from test_hoon import GOOD, benchmark_cases
-from _testkit import Tally
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 NASMC = os.environ.get(
-    'NASMC_BIN', os.path.join(HERE, 'nasmc', 'target', 'release', 'nasmc'))
+    'NASMC_BIN', os.path.join(ROOT, 'nasmc', 'target', 'release', 'nasmc'))
 
 _t = Tally('nasmc')
 check = _t.expect

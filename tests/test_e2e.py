@@ -3,9 +3,10 @@
 This is the real test. If pinochle agrees with us, the assembler is sound.
 """
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import Tally
 from pinochle import nock, parse_noun
 from nockasm import expand
-from _testkit import Tally
 
 _t = Tally('end-to-end')
 section = _t.section

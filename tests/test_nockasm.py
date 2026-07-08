@@ -1,8 +1,9 @@
 """Tests for nockasm. Run with: python test_nockasm.py"""
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import Tally
 from nockasm import expand, peg, cord_to_nat
 from test_hoon import BAD
-from _testkit import Tally
 
 _t = Tally()
 check = _t.check

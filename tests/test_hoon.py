@@ -12,8 +12,9 @@ Set URBIT_BIN to point at a vere binary if the default is wrong.
 import os
 import sys
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import ROOT, desk_file, run_eval
 from nockasm import expand_to_noun, jam, lift, parse, render
-from _testkit import HERE, desk_file, run_eval
 
 LIB = desk_file('lib', 'nockasm.hoon')
 
@@ -154,7 +155,7 @@ BAD = [
 
 
 def benchmark_cases():
-    bdir = os.path.join(HERE, 'benchmarks')
+    bdir = os.path.join(ROOT, 'benchmarks')
     cases = []
     for name in sorted(os.listdir(bdir)):
         if name.endswith('.nasm'):

@@ -8,10 +8,11 @@ Corpus: every formula the differential suite expands, plus handmade
 nouns that exercise the fallback paths.
 """
 
+# _testkit first: importing it puts the repo root on sys.path (see there).
+from _testkit import Tally
 from nockasm import (cell, cue, expand_to_noun, jam, lift, lower,
                      nasm_from_jam, render)
 from test_hoon import GOOD, benchmark_cases
-from _testkit import Tally
 
 _t = Tally('lift')
 check = _t.check
