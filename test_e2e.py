@@ -3,40 +3,32 @@
 This is the real test. If pinochle agrees with us, the assembler is sound.
 """
 
-import sys
 from pinochle import nock, parse_noun
 from nockasm import expand
+from _testkit import Tally
 
-
-PASS = 0
-FAIL = 0
+_t = Tally('end-to-end')
+section = _t.section
 
 
 def run(name, subject_src, formula_src, want):
     """Parse subject; expand formula assembly; run on pinochle; check."""
-    global PASS, FAIL
     formula_str = expand(formula_src)
     subject = parse_noun(subject_src)
     formula = parse_noun(formula_str)
     try:
         got = nock(subject, formula)
-    except Exception as e:
-        FAIL += 1
-        print(f"  FAIL {name}: pinochle raised {type(e).__name__}: {e}")
-        print(f"       formula asm:   {formula_src.strip()}")
-        print(f"       formula nock:  {formula_str}")
+    except Exception as e:  # noqa: BLE001
+        _t.fail_(name, f"pinochle raised {type(e).__name__}: {e}",
+                 f"formula asm:   {formula_src.strip()}",
+                 f"formula nock:  {formula_str}")
         return
     if got == want:
-        PASS += 1
-        print(f"  ok   {name}: {got}")
+        _t.pass_(name, str(got))
     else:
-        FAIL += 1
-        print(f"  FAIL {name}: got {got}, want {want}")
-        print(f"       formula asm:   {formula_src.strip()}")
-        print(f"       formula nock:  {formula_str}")
-
-
-def section(s): print(f"\n== {s} ==")
+        _t.fail_(name, f"got {got}, want {want}",
+                 f"formula asm:   {formula_src.strip()}",
+                 f"formula nock:  {formula_str}")
 
 
 # ----------------------------------------------------------------------
@@ -156,6 +148,4 @@ run("cons-formula via distribution",
 
 
 # ----------------------------------------------------------------------
-print()
-print(f"==> end-to-end: {PASS} passed, {FAIL} failed")
-sys.exit(0 if FAIL == 0 else 1)
+_t.done()

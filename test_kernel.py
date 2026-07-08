@@ -7,14 +7,12 @@ comment-first cell still sets the subject rather than shipping ``#subject`` to
 the assembler.
 """
 
-import sys
-
 from nockasm_kernel.kernel import NockasmKernel
 from pinochle import parse as parse_noun
+from _testkit import Tally
 
-
-PASS = 0
-FAIL = 0
+_t = Tally('kernel')
+section = _t.section
 
 
 def fresh():
@@ -26,24 +24,16 @@ def fresh():
 
 
 def check(name, code, want_last_line):
-    global PASS, FAIL
     try:
         out = fresh()._dispatch(code)
     except Exception as e:  # noqa: BLE001
-        FAIL += 1
-        print(f"  FAIL {name}: raised {type(e).__name__}: {e}")
+        _t.fail_(name, f"raised {type(e).__name__}: {e}")
         return
     got = out.split("\n")[-1]
     if got == want_last_line:
-        PASS += 1
-        print(f"  ok   {name}: {got}")
+        _t.pass_(name, got)
     else:
-        FAIL += 1
-        print(f"  FAIL {name}: got {got!r}, want {want_last_line!r}")
-
-
-def section(s):
-    print(f"\n== {s} ==")
+        _t.fail_(name, f"got {got!r}, want {want_last_line!r}")
 
 
 section("comment-first cells still dispatch #subject")
@@ -83,6 +73,4 @@ check("comment then #show",
       "; peek at state\n#show",
       "subject:    0")
 
-print()
-print(f"==> kernel: {PASS} passed, {FAIL} failed")
-sys.exit(0 if FAIL == 0 else 1)
+_t.done()

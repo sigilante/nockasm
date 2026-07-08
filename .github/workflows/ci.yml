@@ -68,6 +68,14 @@ jobs:
       - name: build nasmc
         # run from nasmc/ so rustup picks up its rust-toolchain.toml
         working-directory: nasmc
-        run: cargo build --release
+        # nockchain's `nockup` crate ships template manifests
+        # (name = "{{project_name}}") that cargo parses while resolving
+        # our git dependency and errors on -- harmlessly: the build
+        # still finishes and cargo exits 0. Strip that one known block
+        # from the log so a passing build reads clean. pipefail keeps
+        # cargo's own exit status, so a real build error still fails.
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | sed '/package name: .*project_name/,/\^/d'
       - name: differential suite (jam parity vs python oracle)
         run: python test_nasmc.py

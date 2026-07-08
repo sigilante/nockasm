@@ -13,18 +13,13 @@ tang.
 Set URBIT_BIN to point at a vere binary if the default is wrong.
 """
 
-import os
 import re
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-LIB = os.path.join(HERE, 'desk', 'lib', 'nockasm.hoon')
-TESTS = os.path.join(HERE, 'desk', 'tests', 'lib', 'nockasm.hoon')
-VERE = os.environ.get(
-    'URBIT_BIN',
-    '/Users/neal/urbit/vere/zig-out/aarch64-macos-none/urbit',
-)
+from _testkit import desk_file, run_eval
+
+LIB = desk_file('lib', 'nockasm.hoon')
+TESTS = desk_file('tests', 'lib', 'nockasm.hoon')
 
 SHIM = """
 =/  expect-eq
@@ -71,11 +66,7 @@ def build_eval_input() -> str:
 
 def main():
     src, arms = build_eval_input()
-    proc = subprocess.run(
-        [VERE, 'eval'], input=src, capture_output=True, text=True,
-        timeout=600,
-    )
-    out = proc.stdout + proc.stderr
+    out = run_eval(src)
     if 'tests-all-ok' in out:
         print(f'ok: {len(arms)} desk test arms pass under the eval shim')
         return 0

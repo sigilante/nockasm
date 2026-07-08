@@ -6,16 +6,11 @@ through it, and dojo round-trips them into the expander.)
     python test_mark.py
 """
 
-import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-MARK = os.path.join(HERE, 'desk', 'mar', 'nasm.hoon')
-VERE = os.environ.get(
-    'URBIT_BIN',
-    '/Users/neal/urbit/vere/zig-out/aarch64-macos-none/urbit',
-)
+from _testkit import desk_file, run_eval
+
+MARK = desk_file('mar', 'nasm.hoon')
 
 TAIL = """
 =/  src  '(%inc (%self))'
@@ -33,11 +28,7 @@ def main():
     with open(MARK) as f:
         mark = f.read()
     src = '=/  door\n' + mark + TAIL
-    proc = subprocess.run(
-        [VERE, 'eval'], input=src, capture_output=True, text=True,
-        timeout=600,
-    )
-    out = proc.stdout + proc.stderr
+    out = run_eval(src)
     if 'nasm-mark-ok' in out:
         print('ok: %nasm mark compiles; mime/txt/noun arms round-trip')
         return 0

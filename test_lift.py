@@ -8,31 +8,14 @@ Corpus: every formula the differential suite expands, plus handmade
 nouns that exercise the fallback paths.
 """
 
-import sys
-
 from nockasm import (cell, cue, expand_to_noun, jam, lift, lower,
                      nasm_from_jam, render)
 from test_hoon import GOOD, benchmark_cases
+from _testkit import Tally
 
-
-PASS = 0
-FAIL = 0
-
-
-def check(name, got, want):
-    global PASS, FAIL
-    if got == want:
-        PASS += 1
-        print(f"  ok   {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL {name}")
-        print(f"       got:  {got!r}")
-        print(f"       want: {want!r}")
-
-
-def section(s):
-    print(f"\n== {s} ==")
+_t = Tally('lift')
+check = _t.check
+section = _t.section
 
 
 # ----------------------------------------------------------------------
@@ -103,7 +86,4 @@ data = jam(f).to_bytes((jam(f).bit_length() + 7) // 8, 'little')
 check("jamfile to nasm", nasm_from_jam(data), "(%inc (%slot 1))\n")
 check("jamfile round-trips", expand_to_noun(nasm_from_jam(data)), f)
 
-
-print()
-print(f"==> lift: {PASS} passed, {FAIL} failed")
-sys.exit(0 if FAIL == 0 else 1)
+_t.done()

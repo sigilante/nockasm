@@ -7,25 +7,12 @@ Corpus: every expansion case from the differential suite plus the
 benchmark transcriptions (imported from test_hoon).
 """
 
-import sys
-
 from nockasm import parse, lower, render, expand_to_noun, NASM_VERSION
 from test_hoon import GOOD, benchmark_cases
+from _testkit import Tally
 
-
-PASS = 0
-FAIL = 0
-
-
-def check(name, ok, detail=''):
-    global PASS, FAIL
-    if ok:
-        PASS += 1
-        print(f"  ok   {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL {name}  {detail}")
-
+_t = Tally('render')
+check = _t.expect
 
 print(f"nasm ir version {NASM_VERSION}")
 corpus = GOOD + benchmark_cases()
@@ -52,6 +39,4 @@ for name, src in corpus:
     over = [ln for ln in text.splitlines() if len(ln) > 76]
     check(name, not over, f"line over 76 cols: {over[:1]}")
 
-print()
-print(f"==> render: {PASS} passed, {FAIL} failed")
-sys.exit(0 if FAIL == 0 else 1)
+_t.done()

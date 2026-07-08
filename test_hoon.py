@@ -10,17 +10,12 @@ Set URBIT_BIN to point at a vere binary if the default is wrong.
 """
 
 import os
-import subprocess
 import sys
 
 from nockasm import expand_to_noun, jam, lift, parse, render
+from _testkit import HERE, desk_file, run_eval
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-LIB = os.path.join(HERE, 'desk', 'lib', 'nockasm.hoon')
-VERE = os.environ.get(
-    'URBIT_BIN',
-    '/Users/neal/urbit/vere/zig-out/aarch64-macos-none/urbit',
-)
+LIB = desk_file('lib', 'nockasm.hoon')
 
 
 # ----------------------------------------------------------------------
@@ -236,11 +231,7 @@ def build_eval_input() -> str:
 
 def main():
     src = build_eval_input()
-    proc = subprocess.run(
-        [VERE, 'eval'], input=src, capture_output=True, text=True,
-        timeout=600,
-    )
-    out = proc.stdout + proc.stderr
+    out = run_eval(src)
     if 'nockasm-all-ok' in out:
         n_good = len(GOOD) + len(benchmark_cases())
         print(f'ok: {n_good} expansion cases match the python oracle '

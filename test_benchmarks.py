@@ -14,6 +14,7 @@ import sys
 
 from pinochle import nock, parse_noun
 from nockasm import expand
+from _testkit import Tally
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,9 +44,8 @@ def run_one(entry):
 
 
 def main():
+    t = Tally('benchmarks')
     manifest = load_manifest()
-    passed = 0
-    failed = 0
     for entry in manifest:
         name = entry['name']
         try:
@@ -53,20 +53,15 @@ def main():
         except FileNotFoundError as e:
             print(f"  SKIP {name}: {e}")
             continue
-        except Exception as e:
-            failed += 1
-            print(f"  FAIL {name}: {type(e).__name__}: {e}")
+        except Exception as e:  # noqa: BLE001
+            t.fail_(name, f"{type(e).__name__}: {e}")
             continue
         if got == want:
-            passed += 1
-            print(f"  ok   {name}: {entry['description']}")
+            t.pass_(name, entry['description'])
         else:
-            failed += 1
-            print(f"  FAIL {name}: got {got!r}, want {want!r}")
-            print(f"       formula: {formula_str}")
-    print()
-    print(f"==> benchmarks: {passed} passed, {failed} failed")
-    sys.exit(0 if failed == 0 else 1)
+            t.fail_(name, f"got {got!r}, want {want!r}",
+                    f"formula: {formula_str}")
+    t.done()
 
 
 if __name__ == '__main__':
