@@ -27,5 +27,9 @@ sync = []
 name = "nockasm"
 path = "src/main.rs"
 
+[[bench]]
+name = "pipeline"
+harness = false
+
 [profile.release]
 opt-level = 3
