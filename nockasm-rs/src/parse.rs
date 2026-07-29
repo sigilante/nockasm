@@ -15,13 +15,15 @@ use crate::lex::{tokenize, Tok, Token};
 
 /// Maximum expression/schema nesting depth.
 ///
-/// Beyond any practical source — the reference Python dies from
-/// recursion depth around 330 for the full pipeline — and calibrated so
-/// that parser-admitted input can be lowered *and* rendered comfortably
-/// within a 2 MiB thread stack even in debug builds (measured cliff
-/// ≈ 600 levels; see `tests/depth.rs`). Hostile nesting is a clean
-/// [`TooDeep`](crate::ParseErrorKind::TooDeep) error, never a stack
-/// overflow.
+/// The parser is the crate's one remaining recursive stage (`lift`,
+/// `lower`, and `render` run on explicit stacks), so this bounds only
+/// its own frames: comfortably within a 2 MiB thread stack even in
+/// debug builds, with headroom to spare (see `tests/depth.rs`), and
+/// beyond any practical source — the reference Python dies from
+/// recursion depth around 330 for the full pipeline. Hostile nesting is
+/// a clean [`TooDeep`](crate::ParseErrorKind::TooDeep) error, never a
+/// stack overflow. Deeper programs belong in the IR API, which has no
+/// depth bound.
 pub const MAX_DEPTH: usize = 400;
 
 /// Parse `.nasm` source into a [`Program`].

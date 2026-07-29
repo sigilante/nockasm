@@ -66,11 +66,15 @@ Nouns are cheap to clone (reference-counted cells with cached
 structural hashes, which is what makes `jam`'s backreference table
 O(1) per node), and atoms are arbitrary-precision with an inline fast
 path for values that fit a `u64`. The noun layer — equality, hashing,
-drop, printing, `jam`, `cue` — plus `lift` and the IR's teardown all
-run on explicit stacks, and parsing is depth-bounded, so hostile input
-(including jamfiles that cue to arbitrarily deep nouns) fails cleanly
-instead of overflowing the stack. With the `sync` feature the internal
-`Rc` becomes `Arc` and everything is `Send + Sync`.
+drop, printing, `jam`, `cue` — plus `lift`, `lower`, `render`, and the
+IR's teardown all run on explicit stacks, and parsing is depth-bounded,
+so no input, however deep, can overflow the call stack: hostile
+jamfiles lift, lower, and render cleanly, and machine-emitted IR has no
+depth bound at all. The renderer sizes wide forms in a bottom-up pass
+and materializes each node's text exactly once, so rendering is
+O(input + output) where the reference implementations are O(n · depth).
+With the `sync` feature the internal `Rc` becomes `Arc` and everything
+is `Send + Sync`.
 
 ## CLI
 

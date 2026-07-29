@@ -1,16 +1,21 @@
-//! The depth-bound guarantee: source admitted by the parser runs through
-//! the *entire* pipeline — lower, render, round trip, lift, jam/cue —
-//! without approaching stack exhaustion, even on a 2 MiB thread stack in
-//! a debug build. Nesting beyond the bound is a clean `TooDeep` error.
+//! The depth guarantees, all checked on a 2 MiB thread stack in a debug
+//! build:
 //!
-//! This is a regression test for frame-size creep in the recursive
-//! stages: `parse`, `lower`, `render`, and `wide` are deliberately
-//! structured as slim dispatchers with fat locals pushed into
-//! per-construct helpers. If this test overflows, that structure has
-//! regressed (or `MAX_DEPTH` has been raised past what the frames
-//! afford).
+//! - Source admitted by the parser runs through the *entire* pipeline —
+//!   lower, render, round trip, lift, jam/cue — without approaching
+//!   stack exhaustion; nesting beyond the bound is a clean `TooDeep`
+//!   error. The parser is the one remaining recursive stage, structured
+//!   as a slim dispatcher so its frames stay small; if that test
+//!   overflows, the structure has regressed (or `MAX_DEPTH` outgrew it).
+//! - `lift`, `lower`, `render`, and the IR's teardown run on explicit
+//!   stacks: nouns and IR arbitrarily deeper than the parser would ever
+//!   admit — hostile jamfiles, machine-emitted binder chains — must
+//!   flow through them untroubled.
 
-use nockasm::{cue, expand, jam, lift, lower, noun, parse, Error, Nasm, Noun, Op, ParseErrorKind};
+use nockasm::{
+    cue, expand, jam, lift, lower, nasm_from_jam, noun, parse, Error, Nasm, Noun, Op,
+    ParseErrorKind,
+};
 
 const TEST_STACK: usize = 2 * 1024 * 1024;
 
@@ -42,16 +47,16 @@ fn admitted_depth_survives_the_full_pipeline() {
         .expect("no stack overflow at the admitted depth");
 }
 
-/// `lift` (and the `Drop` of the IR it produces) runs on an explicit
-/// stack: nouns cued from hostile jamfiles can nest arbitrarily deep in
-/// any direction, and none of it may touch the call stack. Each case
-/// nests half a million levels one way — through formula tails,
-/// cons-formula heads, and opcode-1 payload spines — is shape-checked
-/// with an iterative walk, and is dropped, all inside a 2 MiB thread.
-/// (`lower`/`render` on IR this deep still recurse, by documented
-/// contract; only `lift` and teardown are exercised here.)
+/// `lift`, `lower`, and the `Drop` of the IR between them run on
+/// explicit stacks: nouns cued from hostile jamfiles can nest
+/// arbitrarily deep in any direction, and none of it may touch the call
+/// stack. Each case nests half a million levels one way — through
+/// formula tails, cons-formula heads, and opcode-1 payload spines — is
+/// shape-checked with an iterative walk, closes the soundness law
+/// `lower(None, &lift(f)) == f` (noun equality is iterative too), and
+/// is dropped, all inside a 2 MiB thread.
 #[test]
-fn lift_survives_arbitrarily_deep_nouns() {
+fn lift_and_lower_survive_arbitrarily_deep_nouns() {
     const DEPTH: usize = 500_000;
     let handle = std::thread::Builder::new()
         .stack_size(TEST_STACK)
@@ -73,6 +78,7 @@ fn lift_survives_arbitrarily_deep_nouns() {
                 matches!(cur, Nasm::Op(Op::Slot(a)) if a.as_u64() == Some(1)),
                 "innermost node is (%slot 1)"
             );
+            assert_eq!(lower(None, &ast).expect("lowers"), n, "soundness at depth");
             drop(ast);
 
             // [[[[...] f] f] f] — depth through cons-formula heads.
@@ -95,6 +101,7 @@ fn lift_survives_arbitrarily_deep_nouns() {
                 cur = first.as_ref();
             }
             assert_eq!(seen, DEPTH, "every cons layer lifted");
+            assert_eq!(lower(None, &ast).expect("lowers"), n, "soundness at depth");
             drop(ast);
 
             // [1 [[[...] 0] 0]] — depth through the structural fallback:
@@ -103,7 +110,8 @@ fn lift_survives_arbitrarily_deep_nouns() {
             for _ in 0..DEPTH {
                 payload = Noun::cell(payload, 0u64);
             }
-            let ast = lift(&Noun::cell(1u64, payload));
+            let n = Noun::cell(1u64, payload);
+            let ast = lift(&n);
             let Nasm::Op(Op::Const(inner)) = &ast else {
                 panic!("opcode 1 lifts to %const");
             };
@@ -114,10 +122,58 @@ fn lift_survives_arbitrarily_deep_nouns() {
                 cur = first.as_ref();
             }
             assert_eq!(seen, DEPTH + 1, "every payload layer read structurally");
+            assert_eq!(lower(None, &ast).expect("lowers"), n, "soundness at depth");
             drop(ast);
         })
         .expect("thread spawns");
     handle.join().expect("no stack overflow lifting deep nouns");
+}
+
+/// `render` (via `nasm_from_jam`: cue, lift, render) on formulas far
+/// deeper than the parser would admit — the hostile `--lift` path, end
+/// to end. Depth is kept to thousands, not the half million above,
+/// because tall output is quadratic in size from indentation alone;
+/// what matters is that this is ~10x past where the recursive renderer
+/// overflowed this same 2 MiB thread. The text cannot be re-expanded
+/// (the parser's depth bound is narrower, by documented contract), so
+/// the assertions are structural.
+#[test]
+fn render_survives_formulas_beyond_parser_depth() {
+    const DEPTH: usize = 4_000;
+    let handle = std::thread::Builder::new()
+        .stack_size(TEST_STACK)
+        .spawn(|| {
+            // [4 [4 ... [0 1]]]: tall (%inc nesting until the tail fits wide.
+            let mut n = noun![0 1];
+            for _ in 0..DEPTH {
+                n = Noun::cell(4u64, n);
+            }
+            let text = nasm_from_jam(&jam(&n)).expect("cues and renders");
+            let lines: Vec<&str> = text.lines().collect();
+            assert!(lines.len() > DEPTH - 20, "one line per tall %inc layer");
+            assert_eq!(lines[0], "(%inc");
+            assert!(
+                lines.last().expect("nonempty").ends_with(")"),
+                "every opener closed"
+            );
+            // Past column 76 nothing fits wide, so even the innermost
+            // (%slot 1) renders tall.
+            assert!(text.contains("(%slot"), "the innermost formula appears");
+
+            // [[[[...] f] f] f]: cons-formula heads exercise the
+            // tall-cell merge, every level splicing `[ ` into line one.
+            let mut n = noun![8 [1 0] 4 0 6];
+            for _ in 0..2_000 {
+                n = Noun::cell(n, noun![0 1]);
+            }
+            let text = nasm_from_jam(&jam(&n)).expect("cues and renders");
+            let first = text.lines().next().expect("nonempty");
+            assert!(first.starts_with("[ [ [ "), "merged cell openers");
+        })
+        .expect("thread spawns");
+    handle
+        .join()
+        .expect("no stack overflow rendering deep formulas");
 }
 
 #[test]

@@ -1,15 +1,36 @@
 //! `render`: IR to canonical `.nasm` text.
 //!
 //! This is the normative "canonical rendering v1" of
-//! `doc/compiler-target.md`, ported to be **byte-identical** to the
-//! Python and Hoon renderers: every layout decision is a pure function of
-//! the IR value, the indent, and the *reserve* (how many closing
-//! delimiters an enclosing form will append to the final line), under a
-//! 76-column limit. Nothing remembers source spelling — atoms render from
-//! their value (cord form iff at least two bytes, all printable ASCII, no
+//! `doc/compiler-target.md`, **byte-identical** to the Python and Hoon
+//! renderers: every layout decision is a pure function of the IR value,
+//! the indent, and the *reserve* (how many closing delimiters an
+//! enclosing form will append to the final line), under a 76-column
+//! limit. Nothing remembers source spelling — atoms render from their
+//! value (cord form iff at least two bytes, all printable ASCII, no
 //! quote; else dotted decimal).
+//!
+//! The implementation is two explicit-stack passes — the output bytes
+//! are the specification; only the algorithm differs from the
+//! references:
+//!
+//! 1. **Sizing**: build a shadow of the render tree, annotating every
+//!    node with the *length* of its single-line form (`None` where a
+//!    `#let`/`#match` forces tall layout) and caching the rendered text
+//!    of atom and axis leaves. Every layout decision consumes only
+//!    lengths, and a composite's length is O(1) from its children's —
+//!    composite wide *strings* are deliberately never stored (in a
+//!    nested all-wide tree that would be quadratic memory).
+//! 2. **Emission**: walk the shadow with layout frames, appending into
+//!    one line buffer; a node that fits wide materializes its text
+//!    exactly once, so each node's text enters the output once.
+//!
+//! Total O(input + output) time and no recursion — the references
+//! recompute wide forms at every level, which is O(n · depth), and IR
+//! of any depth renders here without touching the call stack. (Deeply
+//! *tall* output is still quadratic in size from indentation alone;
+//! that is the format, not the renderer.)
 
-use crate::ast::{ArgRef, Nasm, Op, Program, Schema};
+use crate::ast::{ArgRef, Nasm, Program, Schema};
 use crate::noun::Atom;
 
 const WIDTH: usize = 76;
@@ -18,13 +39,15 @@ const WIDTH: usize = 76;
 ///
 /// The round-trip law, checked by the differential suites:
 /// `expand(&render(schema, expr)) == lower(schema, expr)` for every
-/// well-formed IR value, and rendering is idempotent through `parse`.
+/// well-formed IR value the parser can re-admit, and rendering is
+/// idempotent through `parse`.
 pub fn render(schema: Option<&Schema>, expr: &Nasm) -> String {
     let mut lines: Vec<String> = Vec::new();
     if let Some(s) = schema {
         lines.push(format!(":subject {}", schema_text(s)));
     }
-    lines.extend(rend(ArgRef::Expr(expr), 0, 0));
+    let shadow = size(ArgRef::Expr(expr));
+    rend_lines(&shadow, &mut lines);
     let mut out = lines.join("\n");
     out.push('\n');
     out
@@ -36,6 +59,10 @@ impl Program {
         render(self.schema.as_ref(), &self.body)
     }
 }
+
+// ----------------------------------------------------------------------
+// Atom text
+// ----------------------------------------------------------------------
 
 /// Decimal with dots every three digits, matching the reader.
 fn dotted(n: &Atom) -> String {
@@ -77,247 +104,494 @@ fn atom_text(n: &Atom) -> String {
     dotted(n)
 }
 
-/// Schemas always render wide; right spines flatten
+// ----------------------------------------------------------------------
+// Schemas
+// ----------------------------------------------------------------------
+
+/// Schemas always render wide; right spines flatten at every pair
 /// (`{.a .b .c}`, never `{.a {.b .c}}`).
 fn schema_text(s: &Schema) -> String {
-    match s {
-        Schema::Leaf(name) => format!(".{name}"),
-        Schema::Pair(..) => {
-            let mut elems: Vec<&Schema> = Vec::new();
-            let mut cur = s;
-            while let Schema::Pair(head, tail) = cur {
-                elems.push(head);
-                cur = tail;
+    enum Tok<'x> {
+        Sch(&'x Schema),
+        Str(&'static str),
+    }
+    let mut out = String::new();
+    let mut stack: Vec<Tok<'_>> = vec![Tok::Sch(s)];
+    while let Some(t) = stack.pop() {
+        match t {
+            Tok::Str(x) => out.push_str(x),
+            Tok::Sch(s) => match s {
+                Schema::Leaf(name) => {
+                    out.push('.');
+                    out.push_str(name.as_str());
+                }
+                Schema::Pair(..) => {
+                    let mut elems: Vec<&Schema> = Vec::new();
+                    let mut cur = s;
+                    while let Schema::Pair(head, tail) = cur {
+                        elems.push(head);
+                        cur = tail;
+                    }
+                    elems.push(cur);
+                    out.push('{');
+                    stack.push(Tok::Str("}"));
+                    for (i, e) in elems.into_iter().enumerate().rev() {
+                        stack.push(Tok::Sch(e));
+                        if i > 0 {
+                            stack.push(Tok::Str(" "));
+                        }
+                    }
+                }
+            },
+        }
+    }
+    out
+}
+
+// ----------------------------------------------------------------------
+// Pass 1: sizing
+// ----------------------------------------------------------------------
+
+/// A sizing shadow of the render tree: one node per rendered argument,
+/// children in render order, annotated with the single-line length.
+///
+/// Child layout by node kind — the emitter indexes by it:
+/// - atoms and axes: none (leaves, text cached);
+/// - raw cells: the elements, in order;
+/// - ops: the arguments, in order (axis atoms are leaves);
+/// - `#let`: `[value, body]`;
+/// - `#match`: `[scrutinee, pat_1, body_1, ..., pat_k, body_k, default]`.
+struct Shadow<'a> {
+    arg: ArgRef<'a>,
+    /// Length of the wide (single-line) form; `None` when a
+    /// `#let`/`#match` makes the subtree tall-only.
+    wide: Option<usize>,
+    /// Rendered text for atom and axis leaves — needed verbatim at
+    /// emission, and the only way to know a bignum's rendered length.
+    leaf: Option<String>,
+    children: Vec<Shadow<'a>>,
+}
+
+enum SizeTask<'a> {
+    Visit(ArgRef<'a>),
+    Build { arg: ArgRef<'a>, count: usize },
+}
+
+/// Build the shadow tree, post-order on an explicit stack.
+fn size(root: ArgRef<'_>) -> Shadow<'_> {
+    let mut tasks: Vec<SizeTask<'_>> = vec![SizeTask::Visit(root)];
+    let mut done: Vec<Shadow<'_>> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            SizeTask::Visit(arg) => visit(arg, &mut tasks, &mut done),
+            SizeTask::Build { arg, count } => {
+                let children: Vec<Shadow<'_>> = done.drain(done.len() - count..).collect();
+                done.push(build_shadow(arg, children));
             }
-            elems.push(cur);
-            let parts: Vec<String> = elems.into_iter().map(schema_text).collect();
-            format!("{{{}}}", parts.join(" "))
+        }
+    }
+    debug_assert_eq!(done.len(), 1, "every visit yields one shadow");
+    done.pop().expect("the root shadow")
+}
+
+/// One sizing step: leaves finish immediately with their text; a
+/// composite schedules a build under its children in layout order
+/// (leftmost on top of the task stack, so it visits first).
+fn visit<'a>(arg: ArgRef<'a>, tasks: &mut Vec<SizeTask<'a>>, done: &mut Vec<Shadow<'a>>) {
+    let leaf_text = match arg {
+        ArgRef::Axis(a) => Some(atom_text(a)),
+        ArgRef::Expr(Nasm::Atom(a)) => Some(atom_text(a)),
+        ArgRef::Expr(Nasm::Axis(name)) => Some(format!(".{name}")),
+        ArgRef::Expr(_) => None,
+    };
+    if let Some(text) = leaf_text {
+        done.push(Shadow {
+            arg,
+            wide: Some(text.len()),
+            leaf: Some(text),
+            children: Vec::new(),
+        });
+        return;
+    }
+    let ArgRef::Expr(expr) = arg else {
+        unreachable!("axis atoms are leaves");
+    };
+    match expr {
+        Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves handled above"),
+        Nasm::Cell {
+            first,
+            second,
+            rest,
+        } => {
+            tasks.push(SizeTask::Build {
+                arg,
+                count: 2 + rest.len(),
+            });
+            for r in rest.iter().rev() {
+                tasks.push(SizeTask::Visit(ArgRef::Expr(r)));
+            }
+            tasks.push(SizeTask::Visit(ArgRef::Expr(second)));
+            tasks.push(SizeTask::Visit(ArgRef::Expr(first)));
+        }
+        Nasm::Op(op) => {
+            let args = op.args();
+            tasks.push(SizeTask::Build {
+                arg,
+                count: args.len(),
+            });
+            for a in args.into_iter().rev() {
+                tasks.push(SizeTask::Visit(a));
+            }
+        }
+        Nasm::Let { value, body, .. } => {
+            tasks.push(SizeTask::Build { arg, count: 2 });
+            tasks.push(SizeTask::Visit(ArgRef::Expr(body)));
+            tasks.push(SizeTask::Visit(ArgRef::Expr(value)));
+        }
+        Nasm::Match {
+            scrutinee,
+            arms,
+            default,
+        } => {
+            tasks.push(SizeTask::Build {
+                arg,
+                count: 2 + 2 * arms.len(),
+            });
+            tasks.push(SizeTask::Visit(ArgRef::Expr(default)));
+            for arm in arms.iter().rev() {
+                tasks.push(SizeTask::Visit(ArgRef::Expr(&arm.body)));
+                tasks.push(SizeTask::Visit(ArgRef::Expr(&arm.pattern)));
+            }
+            tasks.push(SizeTask::Visit(ArgRef::Expr(scrutinee)));
         }
     }
 }
 
-fn op_head(op: &Op) -> String {
-    format!("(%{}", op.name())
-}
-
-/// Single-line form, or `None` (`#let` / `#match` have no wide form).
-///
-/// A slim dispatcher — fat locals live in the per-construct helpers — so
-/// deep IR renders comfortably within a 2 MiB thread stack even in debug
-/// builds.
-fn wide(e: ArgRef<'_>) -> Option<String> {
-    match e {
-        ArgRef::Axis(a) => Some(atom_text(a)),
-        ArgRef::Expr(e) => match e {
-            Nasm::Atom(a) => Some(atom_text(a)),
-            Nasm::Axis(name) => Some(format!(".{name}")),
-            Nasm::Cell { .. } => wide_cell(e),
-            Nasm::Op(op) => wide_op(op),
-            Nasm::Let { .. } | Nasm::Match { .. } => None,
-        },
-    }
-}
-
-#[inline(never)]
-fn wide_cell(e: &Nasm) -> Option<String> {
-    let parts: Option<Vec<String>> = cell_elems(e).map(|el| wide(ArgRef::Expr(el))).collect();
-    Some(format!("[{}]", parts?.join(" ")))
-}
-
-#[inline(never)]
-fn wide_op(op: &Op) -> Option<String> {
-    let args = op.args();
-    if args.is_empty() {
-        return Some(format!("(%{})", op.name()));
-    }
-    let parts: Option<Vec<String>> = args.into_iter().map(wide).collect();
-    Some(format!("{} {})", op_head(op), parts?.join(" ")))
-}
-
-/// The elements of a raw cell, in order.
-fn cell_elems(e: &Nasm) -> impl Iterator<Item = &Nasm> {
-    let Nasm::Cell {
-        first,
-        second,
-        rest,
-    } = e
-    else {
-        unreachable!("caller matched Cell");
+/// Assemble a composite shadow, computing its wide length from the
+/// children's — mirroring the wide forms `[a b …]` and `(%name a …)`.
+fn build_shadow<'a>(arg: ArgRef<'a>, children: Vec<Shadow<'a>>) -> Shadow<'a> {
+    // Sum of child lengths plus the separating spaces, if all are wide.
+    let joined = |kids: &[Shadow<'_>]| -> Option<usize> {
+        let mut total = 0usize;
+        for k in kids {
+            total += k.wide?;
+        }
+        Some(total + kids.len() - 1)
     };
-    std::iter::once(first.as_ref())
-        .chain(std::iter::once(second.as_ref()))
-        .chain(rest.iter())
+    let ArgRef::Expr(expr) = arg else {
+        unreachable!("axis atoms are leaves");
+    };
+    let wide = match expr {
+        Nasm::Cell { .. } => joined(&children).map(|j| j + 2),
+        Nasm::Op(op) => {
+            if children.is_empty() {
+                Some(3 + op.name().len())
+            } else {
+                joined(&children).map(|j| j + 4 + op.name().len())
+            }
+        }
+        Nasm::Let { .. } | Nasm::Match { .. } => None,
+        Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves never build"),
+    };
+    Shadow {
+        arg,
+        wide,
+        leaf: None,
+        children,
+    }
 }
+
+/// Materialize a wide form (single line, no indent) — called exactly
+/// once per emitted-wide node, walking the subtree with a token stack.
+fn wide_text(sh: &Shadow<'_>) -> String {
+    enum Tok<'s, 'a> {
+        Sh(&'s Shadow<'a>),
+        Str(&'static str),
+    }
+    let capacity = sh.wide.expect("wide_text needs a wide form");
+    let mut out = String::with_capacity(capacity);
+    let mut stack: Vec<Tok<'_, '_>> = vec![Tok::Sh(sh)];
+    while let Some(t) = stack.pop() {
+        match t {
+            Tok::Str(s) => out.push_str(s),
+            Tok::Sh(sh) => {
+                if let Some(text) = &sh.leaf {
+                    out.push_str(text);
+                    continue;
+                }
+                let ArgRef::Expr(expr) = sh.arg else {
+                    unreachable!("axis atoms are leaves");
+                };
+                match expr {
+                    Nasm::Cell { .. } => {
+                        out.push('[');
+                        stack.push(Tok::Str("]"));
+                        for (i, k) in sh.children.iter().enumerate().rev() {
+                            stack.push(Tok::Sh(k));
+                            if i > 0 {
+                                stack.push(Tok::Str(" "));
+                            }
+                        }
+                    }
+                    Nasm::Op(op) => {
+                        out.push_str("(%");
+                        out.push_str(op.name());
+                        stack.push(Tok::Str(")"));
+                        for k in sh.children.iter().rev() {
+                            stack.push(Tok::Sh(k));
+                            stack.push(Tok::Str(" "));
+                        }
+                    }
+                    _ => unreachable!("let/match have no wide form"),
+                }
+            }
+        }
+    }
+    debug_assert_eq!(out.len(), capacity, "sizing and emission agree");
+    out
+}
+
+// ----------------------------------------------------------------------
+// Pass 2: emission
+// ----------------------------------------------------------------------
 
 fn pad(ind: usize) -> String {
     " ".repeat(ind)
 }
 
-/// Append a suffix to the final line.
-fn amend_last(mut lines: Vec<String>, suffix: &str) -> Vec<String> {
-    match lines.last_mut() {
-        Some(last) => last.push_str(suffix),
-        None => lines.push(suffix.to_string()),
-    }
-    lines
+enum EmitTask<'s, 'a> {
+    /// Render this shadow at an indent, with `res` characters of
+    /// enclosing closing-delimiters reserved on its final line.
+    Rend {
+        sh: &'s Shadow<'a>,
+        ind: usize,
+        res: usize,
+    },
+    /// One `#match` arm; a `None` pattern is the `_` default.
+    Case {
+        pattern: Option<&'s Shadow<'a>>,
+        body: &'s Shadow<'a>,
+        ind: usize,
+    },
+    /// Push a pre-formatted line.
+    Line(String),
+    /// Append a suffix to the current final line (closing delimiters,
+    /// the arm arrow).
+    Append(&'static str),
+    /// The tall-cell merge: rewrite two indent spaces of an
+    /// already-emitted line into `[ ` (an equal-length splice).
+    MergeOpen { line: usize, ind: usize },
 }
 
-/// Render `e` at indent `ind` as a list of lines (indent included).
-///
-/// `res` is the reserve: how many characters an enclosing form will
-/// append to this expression's final line (closing delimiters), so that
-/// width decisions account for them and no emitted line exceeds 76.
-fn rend(e: ArgRef<'_>, ind: usize, res: usize) -> Vec<String> {
-    if let Some(lines) = rend_fitting_wide(e, ind, res) {
-        return lines;
+fn rend_lines(root: &Shadow<'_>, out: &mut Vec<String>) {
+    let mut tasks: Vec<EmitTask<'_, '_>> = vec![EmitTask::Rend {
+        sh: root,
+        ind: 0,
+        res: 0,
+    }];
+    while let Some(task) = tasks.pop() {
+        match task {
+            EmitTask::Line(s) => out.push(s),
+            EmitTask::Append(suffix) => out.last_mut().expect("a line to amend").push_str(suffix),
+            EmitTask::MergeOpen { line, ind } => {
+                out[line].replace_range(ind..ind + 2, "[ ");
+            }
+            EmitTask::Rend { sh, ind, res } => rend_step(sh, ind, res, &mut tasks, out),
+            EmitTask::Case { pattern, body, ind } => case_step(pattern, body, ind, &mut tasks, out),
+        }
     }
-    let ArgRef::Expr(expr) = e else {
-        unreachable!("axis atoms always emit from rend_fitting_wide");
+}
+
+/// One rend step: emit the wide form when it fits (atoms and axes emit
+/// theirs fitting or not), else emit this node's head lines now and
+/// schedule its children with the layout frame actions between them.
+fn rend_step<'s, 'a>(
+    sh: &'s Shadow<'a>,
+    ind: usize,
+    res: usize,
+    tasks: &mut Vec<EmitTask<'s, 'a>>,
+    out: &mut Vec<String>,
+) {
+    if let Some(w) = sh.wide {
+        if ind + w + res <= WIDTH {
+            out.push(format!("{}{}", pad(ind), wide_text(sh)));
+            return;
+        }
+    }
+    if let Some(text) = &sh.leaf {
+        // Atoms and axes always have a wide form; emit it even when it
+        // does not fit.
+        out.push(format!("{}{text}", pad(ind)));
+        return;
+    }
+    let ArgRef::Expr(expr) = sh.arg else {
+        unreachable!("axis atoms are leaves");
     };
     match expr {
-        Nasm::Atom(_) | Nasm::Axis(_) => {
-            unreachable!("atoms and axes always emit from rend_fitting_wide")
+        Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves handled above"),
+        Nasm::Cell { .. } => {
+            // `[ ` merged with the first element's first line (two
+            // columns, so continuations align); remaining elements at
+            // indent + 2; `]` appended to the final line.
+            let kids = &sh.children;
+            let last = kids.len() - 1;
+            tasks.push(EmitTask::Append("]"));
+            tasks.push(EmitTask::Rend {
+                sh: &kids[last],
+                ind: ind + 2,
+                res: res + 1,
+            });
+            for middle in kids[1..last].iter().rev() {
+                tasks.push(EmitTask::Rend {
+                    sh: middle,
+                    ind: ind + 2,
+                    res: 0,
+                });
+            }
+            tasks.push(EmitTask::MergeOpen {
+                line: out.len(),
+                ind,
+            });
+            tasks.push(EmitTask::Rend {
+                sh: &kids[0],
+                ind: ind + 2,
+                res: 0,
+            });
         }
-        Nasm::Cell { .. } => rend_cell(expr, ind, res),
-        Nasm::Op(op) => rend_op(op, ind, res),
-        Nasm::Let { .. } => rend_let(expr, ind, res),
-        Nasm::Match { .. } => rend_match(expr, ind, res),
-    }
-}
-
-/// The wide-or-not decision: `Some` when `e` emits as a single line —
-/// because its wide form fits within the reserve, or because it is an
-/// atom or axis (which always emit their wide form, fitting or not).
-#[inline(never)]
-fn rend_fitting_wide(e: ArgRef<'_>, ind: usize, res: usize) -> Option<Vec<String>> {
-    let w = wide(e);
-    if let Some(w) = &w {
-        if ind + w.len() + res <= WIDTH {
-            return Some(vec![format!("{}{w}", pad(ind))]);
+        Nasm::Op(op) => {
+            if sh.children.is_empty() {
+                out.push(format!("{}(%{})", pad(ind), op.name()));
+                return;
+            }
+            out.push(format!("{}(%{}", pad(ind), op.name()));
+            let last = sh.children.len() - 1;
+            tasks.push(EmitTask::Append(")"));
+            tasks.push(EmitTask::Rend {
+                sh: &sh.children[last],
+                ind: ind + 2,
+                res: res + 1,
+            });
+            for a in sh.children[..last].iter().rev() {
+                tasks.push(EmitTask::Rend {
+                    sh: a,
+                    ind: ind + 2,
+                    res: 0,
+                });
+            }
+        }
+        Nasm::Let { name, .. } => {
+            let value = &sh.children[0];
+            let body = &sh.children[1];
+            // "#let ." + name + " =" is name.len() + 8 columns; the
+            // one-liner adds " " + value + " in".
+            let head_len = ind + name.as_str().len() + 8;
+            let one_line = value.wide.is_some_and(|vw| head_len + vw + 4 <= WIDTH);
+            tasks.push(EmitTask::Rend { sh: body, ind, res });
+            if one_line {
+                out.push(format!(
+                    "{}#let .{name} = {} in",
+                    pad(ind),
+                    wide_text(value)
+                ));
+            } else {
+                tasks.push(EmitTask::Line(format!("{}in", pad(ind))));
+                tasks.push(EmitTask::Rend {
+                    sh: value,
+                    ind: ind + 2,
+                    res: 0,
+                });
+                out.push(format!("{}#let .{name} =", pad(ind)));
+            }
+        }
+        Nasm::Match { .. } => {
+            // Note: the reserve is deliberately unused — the reference
+            // renderers do not account for it in the `#match` head or
+            // closing `}` lines.
+            let kids = &sh.children;
+            let arms = (kids.len() - 2) / 2;
+            let scrutinee = &kids[0];
+            let default = &kids[kids.len() - 1];
+            tasks.push(EmitTask::Line(format!("{}}}", pad(ind))));
+            tasks.push(EmitTask::Case {
+                pattern: None,
+                body: default,
+                ind: ind + 2,
+            });
+            for i in (0..arms).rev() {
+                tasks.push(EmitTask::Case {
+                    pattern: Some(&kids[1 + 2 * i]),
+                    body: &kids[2 + 2 * i],
+                    ind: ind + 2,
+                });
+            }
+            // "#match " + scrutinee + " {" is scrutinee + 9 columns.
+            let head_fits = scrutinee.wide.is_some_and(|sw| ind + sw + 9 <= WIDTH);
+            if head_fits {
+                out.push(format!("{}#match {} {{", pad(ind), wide_text(scrutinee)));
+            } else {
+                tasks.push(EmitTask::Line(format!("{}{{", pad(ind))));
+                tasks.push(EmitTask::Rend {
+                    sh: scrutinee,
+                    ind: ind + 2,
+                    res: 0,
+                });
+                out.push(format!("{}#match", pad(ind)));
+            }
         }
     }
-    match e {
-        ArgRef::Axis(_) | ArgRef::Expr(Nasm::Atom(_) | Nasm::Axis(_)) => {
-            Some(vec![format!("{}{}", pad(ind), w.expect("atoms are wide"))])
-        }
-        _ => None,
-    }
 }
 
-/// `[ ` merged with the first element's first line (two columns, so
-/// continuations align); remaining elements at indent + 2; `]` appended
-/// to the final line.
-#[inline(never)]
-fn rend_cell(expr: &Nasm, ind: usize, res: usize) -> Vec<String> {
-    let elems: Vec<&Nasm> = cell_elems(expr).collect();
-    let first = rend(ArgRef::Expr(elems[0]), ind + 2, 0);
-    let mut out = vec![format!("{}[ {}", pad(ind), &first[0][ind + 2..])];
-    out.extend(first.into_iter().skip(1));
-    for el in &elems[1..elems.len() - 1] {
-        out.extend(rend(ArgRef::Expr(el), ind + 2, 0));
-    }
-    out.extend(rend(ArgRef::Expr(elems[elems.len() - 1]), ind + 2, res + 1));
-    amend_last(out, "]")
-}
-
-#[inline(never)]
-fn rend_op(op: &Op, ind: usize, res: usize) -> Vec<String> {
-    let args = op.args();
-    if args.is_empty() {
-        return vec![format!("{}(%{})", pad(ind), op.name())];
-    }
-    let mut out = vec![format!("{}{}", pad(ind), op_head(op))];
-    let last = args.len() - 1;
-    for a in &args[..last] {
-        out.extend(rend(*a, ind + 2, 0));
-    }
-    out.extend(rend(args[last], ind + 2, res + 1));
-    amend_last(out, ")")
-}
-
-#[inline(never)]
-fn rend_let(expr: &Nasm, ind: usize, res: usize) -> Vec<String> {
-    let Nasm::Let { name, value, body } = expr else {
-        unreachable!("caller matched Let");
+/// One `#match` arm at indent `ind`; a `None` pattern is the `_`
+/// default. Three layouts, decided on lengths alone: `P => B` on one
+/// line when both fit; `P =>` with the body below; else the pattern
+/// tall with ` =>` appended and the body below.
+fn case_step<'s, 'a>(
+    pattern: Option<&'s Shadow<'a>>,
+    body: &'s Shadow<'a>,
+    ind: usize,
+    tasks: &mut Vec<EmitTask<'s, 'a>>,
+    out: &mut Vec<String>,
+) {
+    let pattern_text = |pattern: Option<&Shadow<'_>>| match pattern {
+        None => "_".to_string(),
+        Some(p) => wide_text(p),
     };
-    let padding = pad(ind);
-    let head = format!("{padding}#let .{name} =");
-    let mut out: Vec<String> = Vec::new();
-    let one = wide(ArgRef::Expr(value))
-        .map(|vw| format!("{head} {vw} in"))
-        .filter(|line| line.len() <= WIDTH);
-    match one {
-        Some(line) => out.push(line),
-        None => {
-            out.push(head);
-            out.extend(rend(ArgRef::Expr(value), ind + 2, 0));
-            out.push(format!("{padding}in"));
-        }
-    }
-    out.extend(rend(ArgRef::Expr(body), ind, res));
-    out
-}
-
-/// Note: the reserve is deliberately unused — the reference renderers do
-/// not account for it in the `#match` head or closing `}` lines.
-#[inline(never)]
-fn rend_match(expr: &Nasm, ind: usize, _res: usize) -> Vec<String> {
-    let Nasm::Match {
-        scrutinee,
-        arms,
-        default,
-    } = expr
-    else {
-        unreachable!("caller matched Match");
+    let pw_len = match pattern {
+        None => Some(1),
+        Some(p) => p.wide,
     };
-    let padding = pad(ind);
-    let one = wide(ArgRef::Expr(scrutinee))
-        .map(|sw| format!("{padding}#match {sw} {{"))
-        .filter(|line| line.len() <= WIDTH);
-    let mut out: Vec<String> = Vec::new();
-    match one {
-        Some(line) => out.push(line),
-        None => {
-            out.push(format!("{padding}#match"));
-            out.extend(rend(ArgRef::Expr(scrutinee), ind + 2, 0));
-            out.push(format!("{padding}{{"));
+    if let (Some(pl), Some(bl)) = (pw_len, body.wide) {
+        // pad + P + " => " + B
+        if ind + pl + 4 + bl <= WIDTH {
+            out.push(format!(
+                "{}{} => {}",
+                pad(ind),
+                pattern_text(pattern),
+                wide_text(body)
+            ));
+            return;
         }
     }
-    for arm in arms {
-        out.extend(rend_case(Some(&arm.pattern), &arm.body, ind + 2));
-    }
-    out.extend(rend_case(None, default, ind + 2));
-    out.push(format!("{padding}}}"));
-    out
-}
-
-/// One `#match` arm at indent `ind`; a `None` pattern is the `_` default.
-fn rend_case(pattern: Option<&Nasm>, body: &Nasm, ind: usize) -> Vec<String> {
-    let padding = pad(ind);
-    let pw = match pattern {
-        None => Some("_".to_string()),
-        Some(p) => wide(ArgRef::Expr(p)),
-    };
-    let bw = wide(ArgRef::Expr(body));
-    if let (Some(pw), Some(bw)) = (&pw, &bw) {
-        let line = format!("{padding}{pw} => {bw}");
-        if line.len() <= WIDTH {
-            return vec![line];
+    if let Some(pl) = pw_len {
+        // pad + P + " =>"
+        if ind + pl + 3 <= WIDTH {
+            out.push(format!("{}{} =>", pad(ind), pattern_text(pattern)));
+            tasks.push(EmitTask::Rend {
+                sh: body,
+                ind: ind + 2,
+                res: 0,
+            });
+            return;
         }
     }
-    if let Some(pw) = &pw {
-        let head = format!("{padding}{pw} =>");
-        if head.len() <= WIDTH {
-            let mut out = vec![head];
-            out.extend(rend(ArgRef::Expr(body), ind + 2, 0));
-            return out;
-        }
+    tasks.push(EmitTask::Rend {
+        sh: body,
+        ind: ind + 2,
+        res: 0,
+    });
+    tasks.push(EmitTask::Append(" =>"));
+    match pattern {
+        None => out.push(format!("{}_", pad(ind))),
+        Some(p) => tasks.push(EmitTask::Rend { sh: p, ind, res: 3 }),
     }
-    let pl = match pattern {
-        None => vec![format!("{padding}_")],
-        Some(p) => rend(ArgRef::Expr(p), ind, 3),
-    };
-    let mut out = amend_last(pl, " =>");
-    out.extend(rend(ArgRef::Expr(body), ind + 2, 0));
-    out
 }

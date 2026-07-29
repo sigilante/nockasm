@@ -12,15 +12,33 @@
 //!
 //! Axes are [`Atom`]s, not machine words, so deeply nested binders cannot
 //! overflow — parity with the bignum reference implementations.
+//!
+//! The traversal runs on an explicit stack, one post-order pass over the
+//! IR: a task stack of pending expansions and assembly frames, and a
+//! value stack of completed nouns. IR of any depth — machine-emitted
+//! binder chains, or the lift of a hostile jamfile — lowers without
+//! touching the call stack. Two structural facts keep it simple: only
+//! [`Nasm::Atom`] nodes can expand to atoms, so the formula-position
+//! lift is a per-task flag consulted there alone; and binder
+//! environments are immutable once built, so tasks share them by
+//! refcount. One divergence from the reference, deliberately harmless:
+//! environment errors (`#let` shadowing) surface when the binder is
+//! *scheduled*, not after its value expands, so on a source with several
+//! errors a different one may be reported first — the set of accepted
+//! and rejected sources is identical.
 
 use std::collections::BTreeMap;
 
 use crate::ast::{Name, Nasm, Op, Program, Schema};
 use crate::error::{Error, LowerError};
-use crate::noun::{peg, Atom, Noun};
+use crate::noun;
+use crate::noun::{peg, Atom, Noun, P};
 use crate::parse::parse;
 
 type Axes = BTreeMap<Name, Atom>;
+
+/// A shared binder environment: name to subject axis.
+type Env = P<Axes>;
 
 /// Expand `.nasm` source to a canonical Nock formula: `parse` then
 /// [`lower`].
@@ -38,17 +56,82 @@ pub fn expand(src: &str) -> Result<Noun, Error> {
     Ok(program.lower()?)
 }
 
+/// One pending step of the traversal.
+enum Task<'a> {
+    /// Expand `node` against `env`. `formula` marks a formula position,
+    /// where a bare atom lifts to `[1 atom]`; only [`Nasm::Atom`] can
+    /// expand to an atom, so the flag is consulted there alone.
+    Expand {
+        node: &'a Nasm,
+        env: Env,
+        formula: bool,
+    },
+    /// Take this frame's completed children off the value stack and
+    /// push the assembled noun.
+    Assemble(Frame),
+}
+
+/// How to assemble a noun from its completed children.
+///
+/// Children always execute left-to-right (in the reference evaluation
+/// order), so the leftmost child's value sits deepest in the value
+/// stack: fixed-arity frames pop right-to-left, and the counted frames
+/// drain their range in order.
+enum Frame {
+    /// A raw cell of this many elements, right-associated.
+    Cell(usize),
+    /// `[1 x]` — `%const` and `%arm` share the equation.
+    Quote,
+    Eval,
+    Isa,
+    Inc,
+    Eq,
+    If,
+    Comp,
+    Push,
+    /// `[9 ax f]` — the axis is an atom literal, already known.
+    Call(Atom),
+    /// `[10 [ax v] f]` — the axis is an atom literal, already known.
+    Edit(Atom),
+    /// `[11 t f]` — static hint.
+    Hint,
+    /// `[11 [t c] f]` — dynamic hint.
+    Hintd,
+    /// `[8 v b]`.
+    Let,
+    /// `[8 s dispatch]` over this many arms; children are the
+    /// scrutinee, the default, then each arm's pattern and body in the
+    /// reference (last-arm-first) evaluation order.
+    Match {
+        arms: usize,
+    },
+}
+
 /// Lower an IR value to its canonical Nock noun.
 pub fn lower(schema: Option<&Schema>, expr: &Nasm) -> Result<Noun, LowerError> {
-    let axes = match schema {
-        None => Axes::new(),
-        Some(s) => {
-            let mut axes = Axes::new();
-            resolve_schema(s, Atom::from(1u64), &mut axes)?;
-            axes
+    let mut axes = Axes::new();
+    if let Some(s) = schema {
+        resolve_schema(s, &mut axes)?;
+    }
+    let mut tasks: Vec<Task<'_>> = vec![Task::Expand {
+        node: expr,
+        env: P::new(axes),
+        formula: false,
+    }];
+    let mut values: Vec<Noun> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Expand { node, env, formula } => {
+                expand_step(node, env, formula, &mut tasks, &mut values)?
+            }
+            Task::Assemble(frame) => {
+                let v = assemble(frame, &mut values);
+                values.push(v);
+            }
         }
-    };
-    expand_node(expr, &axes)
+    }
+    debug_assert_eq!(values.len(), 1, "every task tree yields one value");
+    Ok(values.pop().expect("the root value"))
 }
 
 impl Program {
@@ -58,19 +141,23 @@ impl Program {
     }
 }
 
-fn resolve_schema(s: &Schema, base: Atom, axes: &mut Axes) -> Result<(), LowerError> {
-    match s {
-        Schema::Leaf(name) => {
-            if axes.insert(name.clone(), base).is_some() {
-                return Err(LowerError::DuplicateSchemaName(name.clone()));
+/// Resolve a `:subject` schema to its name-to-axis map, rooted at 1.
+fn resolve_schema(s: &Schema, axes: &mut Axes) -> Result<(), LowerError> {
+    let mut stack: Vec<(&Schema, Atom)> = vec![(s, Atom::from(1u64))];
+    while let Some((s, base)) = stack.pop() {
+        match s {
+            Schema::Leaf(name) => {
+                if axes.insert(name.clone(), base).is_some() {
+                    return Err(LowerError::DuplicateSchemaName(name.clone()));
+                }
             }
-            Ok(())
-        }
-        Schema::Pair(head, tail) => {
-            resolve_schema(head, base.double_plus(false), axes)?;
-            resolve_schema(tail, base.double_plus(true), axes)
+            Schema::Pair(head, tail) => {
+                stack.push((tail, base.double_plus(true)));
+                stack.push((head, base.double_plus(false)));
+            }
         }
     }
+    Ok(())
 }
 
 /// When the subject becomes `[new old]`, every old axis n moves to
@@ -85,131 +172,354 @@ fn shift_axes(axes: &Axes) -> Axes {
         .collect()
 }
 
-/// A bare atom in formula position becomes the constant `[1 atom]`.
-fn quot(n: Noun) -> Noun {
-    if n.is_atom() {
-        Noun::cell(1u64, n)
-    } else {
-        n
-    }
-}
-
-/// Expand in formula position (lifting).
-fn formula(e: &Nasm, axes: &Axes) -> Result<Noun, LowerError> {
-    Ok(quot(expand_node(e, axes)?))
-}
-
-/// The recursion point. A slim dispatcher (fat locals live in the
-/// per-construct helpers) so that IR at the parser's depth bound lowers
-/// comfortably within a 2 MiB thread stack even in debug builds.
-fn expand_node(e: &Nasm, axes: &Axes) -> Result<Noun, LowerError> {
-    match e {
-        Nasm::Atom(_) | Nasm::Axis(_) => expand_leaf(e, axes),
-        Nasm::Cell { .. } => expand_cell(e, axes),
-        Nasm::Op(op) => expand_op(op, axes),
-        Nasm::Let { .. } => expand_let(e, axes),
-        Nasm::Match { .. } => expand_match(e, axes),
-    }
-}
-
-#[inline(never)]
-fn expand_leaf(e: &Nasm, axes: &Axes) -> Result<Noun, LowerError> {
-    match e {
-        Nasm::Atom(a) => Ok(Noun::from(a.clone())),
-        Nasm::Axis(name) => match axes.get(name) {
-            Some(ax) => Ok(Noun::cell(0u64, ax.clone())),
-            None => Err(LowerError::UnboundAxis {
-                name: name.clone(),
-                declared: axes.keys().cloned().collect(),
-            }),
+/// One expansion step: push a finished leaf value, or schedule an
+/// assembly frame under its children (leftmost child on top of the task
+/// stack, so it executes first).
+fn expand_step<'a>(
+    node: &'a Nasm,
+    env: Env,
+    formula: bool,
+    tasks: &mut Vec<Task<'a>>,
+    values: &mut Vec<Noun>,
+) -> Result<(), LowerError> {
+    match node {
+        Nasm::Atom(a) => {
+            let v = Noun::from(a.clone());
+            values.push(if formula { Noun::cell(1u64, v) } else { v });
+        }
+        Nasm::Axis(name) => match env.get(name) {
+            Some(ax) => values.push(Noun::cell(0u64, ax.clone())),
+            None => {
+                return Err(LowerError::UnboundAxis {
+                    name: name.clone(),
+                    declared: env.keys().cloned().collect(),
+                })
+            }
         },
-        _ => unreachable!("caller matched a leaf"),
+        Nasm::Cell {
+            first,
+            second,
+            rest,
+        } => {
+            tasks.push(Task::Assemble(Frame::Cell(2 + rest.len())));
+            for r in rest.iter().rev() {
+                tasks.push(Task::Expand {
+                    node: r,
+                    env: env.clone(),
+                    formula: false,
+                });
+            }
+            tasks.push(Task::Expand {
+                node: second,
+                env: env.clone(),
+                formula: false,
+            });
+            tasks.push(Task::Expand {
+                node: first,
+                env,
+                formula: false,
+            });
+        }
+        Nasm::Op(op) => schedule_op(op, env, tasks, values),
+        Nasm::Let { name, value, body } => {
+            // The value is compiled against the old subject; the body
+            // sees the binding at axis 2 and everything else pegged
+            // under 3.
+            let mut new = shift_axes(&env);
+            if new.contains_key(name) {
+                return Err(LowerError::LetShadows(name.clone()));
+            }
+            new.insert(name.clone(), Atom::from(2u64));
+            tasks.push(Task::Assemble(Frame::Let));
+            tasks.push(Task::Expand {
+                node: body,
+                env: P::new(new),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: value,
+                env,
+                formula: true,
+            });
+        }
+        Nasm::Match {
+            scrutinee,
+            arms,
+            default,
+        } => {
+            // Patterns are literal nouns: expanded unlifted, wrapped
+            // [1 pat] at assembly for the equality test against the
+            // scrutinee at axis 2.
+            let new = P::new(shift_axes(&env));
+            tasks.push(Task::Assemble(Frame::Match { arms: arms.len() }));
+            for arm in arms.iter() {
+                tasks.push(Task::Expand {
+                    node: &arm.body,
+                    env: new.clone(),
+                    formula: true,
+                });
+                tasks.push(Task::Expand {
+                    node: &arm.pattern,
+                    env: new.clone(),
+                    formula: false,
+                });
+            }
+            tasks.push(Task::Expand {
+                node: default,
+                env: new,
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: scrutinee,
+                env,
+                formula: true,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Schedule one opcode application: zero-child ops finish immediately;
+/// the rest put an assembly frame under their children, with the
+/// reference argument kinds (`formula` for 'f' positions, plain
+/// expansion for 'n' positions, and axis atoms carried in the frame).
+fn schedule_op<'a>(op: &'a Op, env: Env, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Noun>) {
+    // Two local shapes: `f` schedules a formula position, `n` a noun
+    // position. Push order is reversed below so children execute
+    // left-to-right.
+    match op {
+        Op::Self_ => values.push(noun![0 1]),
+        Op::Battery => values.push(noun![0 2]),
+        Op::Payload => values.push(noun![0 3]),
+        Op::Sample => values.push(noun![0 6]),
+        Op::Context => values.push(noun![0 7]),
+        Op::Crash => values.push(noun![0 0]),
+        Op::Slot(ax) => values.push(noun![0(ax.clone())]),
+        Op::Const(x) | Op::Arm(x) => {
+            tasks.push(Task::Assemble(Frame::Quote));
+            tasks.push(Task::Expand {
+                node: x,
+                env,
+                formula: false,
+            });
+        }
+        Op::Isa(x) => {
+            tasks.push(Task::Assemble(Frame::Isa));
+            tasks.push(Task::Expand {
+                node: x,
+                env,
+                formula: true,
+            });
+        }
+        Op::Inc(x) => {
+            tasks.push(Task::Assemble(Frame::Inc));
+            tasks.push(Task::Expand {
+                node: x,
+                env,
+                formula: true,
+            });
+        }
+        Op::Eval(a, b) => {
+            tasks.push(Task::Assemble(Frame::Eval));
+            tasks.push(Task::Expand {
+                node: b,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: a,
+                env,
+                formula: true,
+            });
+        }
+        Op::Eq(a, b) => {
+            tasks.push(Task::Assemble(Frame::Eq));
+            tasks.push(Task::Expand {
+                node: b,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: a,
+                env,
+                formula: true,
+            });
+        }
+        Op::Comp(a, b) => {
+            tasks.push(Task::Assemble(Frame::Comp));
+            tasks.push(Task::Expand {
+                node: b,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: a,
+                env,
+                formula: true,
+            });
+        }
+        Op::Push(a, b) => {
+            tasks.push(Task::Assemble(Frame::Push));
+            tasks.push(Task::Expand {
+                node: b,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: a,
+                env,
+                formula: true,
+            });
+        }
+        Op::If(c, t, e) => {
+            tasks.push(Task::Assemble(Frame::If));
+            tasks.push(Task::Expand {
+                node: e,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: t,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: c,
+                env,
+                formula: true,
+            });
+        }
+        Op::Call(ax, f) => {
+            tasks.push(Task::Assemble(Frame::Call(ax.clone())));
+            tasks.push(Task::Expand {
+                node: f,
+                env,
+                formula: true,
+            });
+        }
+        Op::Edit(ax, v, f) => {
+            tasks.push(Task::Assemble(Frame::Edit(ax.clone())));
+            tasks.push(Task::Expand {
+                node: f,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: v,
+                env,
+                formula: true,
+            });
+        }
+        Op::Hint(t, f) => {
+            tasks.push(Task::Assemble(Frame::Hint));
+            tasks.push(Task::Expand {
+                node: f,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: t,
+                env,
+                formula: false,
+            });
+        }
+        Op::Hintd(t, c, f) => {
+            tasks.push(Task::Assemble(Frame::Hintd));
+            tasks.push(Task::Expand {
+                node: f,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: c,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: t,
+                env,
+                formula: false,
+            });
+        }
     }
 }
 
-#[inline(never)]
-fn expand_cell(e: &Nasm, axes: &Axes) -> Result<Noun, LowerError> {
-    let Nasm::Cell {
-        first,
-        second,
-        rest,
-    } = e
-    else {
-        unreachable!("caller matched Cell");
-    };
-    let mut elems = Vec::with_capacity(2 + rest.len());
-    elems.push(expand_node(first, axes)?);
-    elems.push(expand_node(second, axes)?);
-    for r in rest {
-        elems.push(expand_node(r, axes)?);
+/// Build one noun from the top of the value stack (children
+/// left-to-right, leftmost deepest).
+fn assemble(frame: Frame, values: &mut Vec<Noun>) -> Noun {
+    fn pop(values: &mut Vec<Noun>) -> Noun {
+        values.pop().expect("assemble: child value present")
     }
-    Ok(Noun::autocons(elems).expect("cell has >= 2 elements"))
-}
-
-#[inline(never)]
-fn expand_let(e: &Nasm, axes: &Axes) -> Result<Noun, LowerError> {
-    let Nasm::Let { name, value, body } = e else {
-        unreachable!("caller matched Let");
-    };
-    // Value compiled against the old subject; the body sees the binding
-    // at axis 2 and everything else pegged under 3.
-    let v = formula(value, axes)?;
-    let mut new = shift_axes(axes);
-    if new.contains_key(name) {
-        return Err(LowerError::LetShadows(name.clone()));
+    match frame {
+        Frame::Cell(count) => {
+            let elems: Vec<Noun> = values.drain(values.len() - count..).collect();
+            Noun::autocons(elems).expect("cell has >= 2 elements")
+        }
+        Frame::Quote => noun![1(pop(values))],
+        Frame::Isa => noun![3(pop(values))],
+        Frame::Inc => noun![4(pop(values))],
+        Frame::Eval => {
+            let b = pop(values);
+            let a = pop(values);
+            noun![2(a)(b)]
+        }
+        Frame::Eq => {
+            let b = pop(values);
+            let a = pop(values);
+            noun![5(a)(b)]
+        }
+        Frame::Comp => {
+            let b = pop(values);
+            let a = pop(values);
+            noun![7(a)(b)]
+        }
+        Frame::Push => {
+            let b = pop(values);
+            let a = pop(values);
+            noun![8(a)(b)]
+        }
+        Frame::If => {
+            let e = pop(values);
+            let t = pop(values);
+            let c = pop(values);
+            noun![6(c)(t)(e)]
+        }
+        Frame::Call(ax) => noun![9(ax)(pop(values))],
+        Frame::Edit(ax) => {
+            let f = pop(values);
+            let v = pop(values);
+            noun![10[(ax)(v)](f)]
+        }
+        Frame::Hint => {
+            let f = pop(values);
+            let t = pop(values);
+            noun![11(t)(f)]
+        }
+        Frame::Hintd => {
+            let f = pop(values);
+            let c = pop(values);
+            let t = pop(values);
+            noun![11[(t)(c)](f)]
+        }
+        Frame::Let => {
+            let b = pop(values);
+            let v = pop(values);
+            noun![8(v)(b)]
+        }
+        Frame::Match { arms } => {
+            // Children in evaluation order: scrutinee, default, then
+            // (pattern, body) per arm from the last arm to the first —
+            // exactly the reference fold, so wrapping in drain order
+            // puts the last arm innermost and the first arm outermost.
+            let count = 2 + 2 * arms;
+            let drained: Vec<Noun> = values.drain(values.len() - count..).collect();
+            let mut it = drained.into_iter();
+            let s = it.next().expect("scrutinee");
+            let mut result = it.next().expect("default");
+            while let (Some(p), Some(b)) = (it.next(), it.next()) {
+                result = noun![6 [5 [1 (p)] 0 2] (b) (result)];
+            }
+            noun![8(s)(result)]
+        }
     }
-    new.insert(name.clone(), Atom::from(2u64));
-    let b = formula(body, &new)?;
-    Ok(Noun::cell(8u64, Noun::cell(v, b)))
-}
-
-#[inline(never)]
-fn expand_match(e: &Nasm, axes: &Axes) -> Result<Noun, LowerError> {
-    let Nasm::Match {
-        scrutinee,
-        arms,
-        default,
-    } = e
-    else {
-        unreachable!("caller matched Match");
-    };
-    let s = formula(scrutinee, axes)?;
-    let new = shift_axes(axes);
-    let mut result = formula(default, &new)?;
-    for arm in arms.iter().rev() {
-        // The pattern is a literal noun: expanded unlifted, then wrapped
-        // [1 pat] for the equality test against the scrutinee at axis 2.
-        let pat = expand_node(&arm.pattern, &new)?;
-        let body = formula(&arm.body, &new)?;
-        result = crate::noun![6 [5 [1 (pat)] 0 2] (body) (result)];
-    }
-    Ok(crate::noun![8(s)(result)])
-}
-
-fn expand_op(op: &Op, axes: &Axes) -> Result<Noun, LowerError> {
-    use crate::noun;
-    let f = |e: &Nasm| formula(e, axes);
-    let n = |e: &Nasm| expand_node(e, axes);
-    Ok(match op {
-        Op::Self_ => noun![0 1],
-        Op::Battery => noun![0 2],
-        Op::Payload => noun![0 3],
-        Op::Sample => noun![0 6],
-        Op::Context => noun![0 7],
-        Op::Crash => noun![0 0],
-        Op::Slot(ax) => noun![0(ax.clone())],
-        Op::Const(x) => noun![1(n(x)?)],
-        Op::Arm(x) => noun![1(n(x)?)],
-        Op::Eval(s, g) => noun![2(f(s)?)(f(g)?)],
-        Op::Isa(x) => noun![3(f(x)?)],
-        Op::Inc(x) => noun![4(f(x)?)],
-        Op::Eq(a, b) => noun![5(f(a)?)(f(b)?)],
-        Op::If(c, t, e) => noun![6(f(c)?)(f(t)?)(f(e)?)],
-        Op::Comp(a, b) => noun![7(f(a)?)(f(b)?)],
-        Op::Push(a, b) => noun![8(f(a)?)(f(b)?)],
-        Op::Call(ax, g) => noun![9(ax.clone())(f(g)?)],
-        Op::Edit(ax, v, g) => noun![10[(ax.clone())(f(v)?)](f(g)?)],
-        Op::Hint(t, g) => noun![11(n(t)?)(f(g)?)],
-        Op::Hintd(t, c, g) => noun![11[(n(t)?)(f(c)?)](f(g)?)],
-    })
 }

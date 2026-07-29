@@ -77,16 +77,18 @@
 //!
 //! # Limits
 //!
-//! Parsing is depth-bounded ([`parse::MAX_DEPTH`]), and the noun layer
-//! (equality, hashing, drop, printing, `jam`, `cue`) plus [`lift`] and
-//! the IR's own teardown run on explicit stacks, so hostile input —
-//! including a jamfile that cues to an arbitrarily deep noun — cannot
-//! overflow the stack anywhere on those paths. `lower` and `render`
-//! recurse over IR structure (as do the IR's derived `Clone` and
-//! `PartialEq`); their depth is bounded by the parser for text input,
-//! but IR built programmatically or lifted from a hostile noun is the
-//! caller's responsibility to keep saner than tens of thousands of
-//! levels deep before lowering or rendering it.
+//! Parsing is depth-bounded ([`parse::MAX_DEPTH`]); everything else —
+//! the noun layer (equality, hashing, drop, printing, `jam`, `cue`),
+//! [`lift`], [`lower`], [`render`], and the IR's own teardown — runs on
+//! explicit stacks, so no input, however deep, can overflow the call
+//! stack through this crate's pipeline: hostile jamfiles lift, lower,
+//! and render cleanly, and machine-emitted IR has no depth bound at
+//! all. The IR's *derived* `Clone`, `PartialEq`, and `Debug` still
+//! recurse; deep-cloning or deep-comparing IR is the caller's lookout.
+//! One asymmetry to know about: `render` happily emits IR deeper than
+//! the parser re-admits, so the textual round trip of the render law is
+//! quantified over parser-admissible depth — beyond it, equality lives
+//! at the noun level via `lower`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
