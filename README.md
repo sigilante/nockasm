@@ -161,6 +161,27 @@ every corpus jam byte-identical to the Python oracle — a third
 independent executor (CPython, Hoon-on-vere, Hoon-on-nockvm) of the
 same laws. See `nasmc/README.md`.
 
+## Rust crate
+
+`nockasm-rs/` is a pure Rust implementation of the whole contract —
+`parse` / `lower` / `render` / `lift` / `jam` / `cue` — as an
+embeddable library plus a CLI flag-compatible with nasmc. Zero
+dependencies, `#![forbid(unsafe_code)]`, stable toolchain; the typed IR
+makes ill-formed nodes (unknown opcodes, wrong arities, a `#match`
+without a default) unrepresentable, so a compiler backend can target it
+directly and get the laws by construction.
+
+```rust
+use nockasm::{expand, noun};
+assert_eq!(expand("(%inc (%self))").unwrap(), noun![4 0 1]);
+```
+
+`tests/test_rust.py` makes it the fourth independent executor: every
+corpus source through every CLI mode byte-identical to the Python
+oracle, and — when the nasmc binary is present — compared *directly*
+against the Hoon/NockApp binary, byte-for-byte for identical
+invocations. See `nockasm-rs/README.md`.
+
 ## Structural macros
 
 ### `#let .name = VALUE in BODY`
@@ -273,6 +294,7 @@ python tests/test_render.py      # target-IR round-trip law + render idempotence
 python tests/test_lift.py        # jam/cue vectors + lift soundness, 69 cases
 python tests/test_desk.py        # on-ship test arms via urbit eval shim
 python tests/test_mark.py        # %nasm clay mark grow/grab round-trips
+python tests/test_rust.py        # rust crate vs python oracle (+ nasmc direct)
 ```
 
 `tests/test_benchmarks.py` reads `benchmarks/tests.json` and `benchmarks/<name>.nasm`

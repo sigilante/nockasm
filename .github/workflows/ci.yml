@@ -52,6 +52,28 @@ jobs:
       - name: nasm clay mark
         run: if [ -f tests/test_mark.py ]; then URBIT_BIN=./urbit python tests/test_mark.py; fi
 
+  rust:
+    name: rust crate (pure)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # stable toolchain: the pure crate is dependency-free and does not
+      # touch nockvm (nasmc/rust-toolchain.toml does not apply here)
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nockasm-rs
+      - name: clippy
+        working-directory: nockasm-rs
+        run: cargo clippy --all-targets -- -D warnings
+      - name: unit, law, and property tests
+        working-directory: nockasm-rs
+        run: cargo test --release
+      - name: differential suite (all modes vs python oracle)
+        run: python tests/test_rust.py
+
   nasmc:
     name: nasmc differential (nockvm)
     runs-on: ubuntu-latest
@@ -79,3 +101,11 @@ jobs:
           cargo build --release 2>&1 | sed '/package name: .*project_name/,/\^/d'
       - name: differential suite (jam parity vs python oracle)
         run: python tests/test_nasmc.py
+      - name: build the pure rust crate
+        # stable toolchain: nockasm-rs/ has no toolchain pin of its own
+        working-directory: nockasm-rs
+        run: cargo build --release
+      - name: rust vs nasmc direct parity (byte-identical outputs)
+        # test_rust.py finds nasmc/target/release/nasmc built above and
+        # adds the direct NockApp comparison to the oracle parity run
+        run: python tests/test_rust.py
