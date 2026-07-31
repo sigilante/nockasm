@@ -31,7 +31,7 @@
 //! that is the format, not the renderer.)
 
 use crate::ast::{ArgRef, Nasm, Program, Schema};
-use crate::noun::Atom;
+use crate::noun::{Atom, NounRef};
 
 const WIDTH: usize = 76;
 
@@ -125,6 +125,7 @@ fn schema_text(s: &Schema) -> String {
                     out.push('.');
                     out.push_str(name.as_str());
                 }
+                Schema::Hole => out.push('_'),
                 Schema::Pair(..) => {
                     let mut elems: Vec<&Schema> = Vec::new();
                     let mut cur = s;
@@ -200,6 +201,10 @@ fn size(root: ArgRef<'_>) -> Shadow<'_> {
 fn visit<'a>(arg: ArgRef<'a>, tasks: &mut Vec<SizeTask<'a>>, done: &mut Vec<Shadow<'a>>) {
     let leaf_text = match arg {
         ArgRef::Axis(a) => Some(atom_text(a)),
+        ArgRef::Noun(n) => match n.view() {
+            NounRef::Atom(a) => Some(atom_text(a)),
+            NounRef::Cell(..) => None,
+        },
         ArgRef::Expr(Nasm::Atom(a)) => Some(atom_text(a)),
         ArgRef::Expr(Nasm::Axis(name)) => Some(format!(".{name}")),
         ArgRef::Expr(_) => None,
@@ -213,11 +218,36 @@ fn visit<'a>(arg: ArgRef<'a>, tasks: &mut Vec<SizeTask<'a>>, done: &mut Vec<Shad
         });
         return;
     }
-    let ArgRef::Expr(expr) = arg else {
-        unreachable!("axis atoms are leaves");
+    let expr = match arg {
+        ArgRef::Expr(expr) => expr,
+        ArgRef::Noun(n) => {
+            // A `%nock` payload cell reads as pure structure: atoms and
+            // right-spine-flattened raw cells, exactly the reference
+            // noun-ast.
+            let mut count = 0usize;
+            let mut cur = n;
+            let mut elems: Vec<ArgRef<'a>> = Vec::new();
+            while let NounRef::Cell(h, t) = cur.view() {
+                elems.push(ArgRef::Noun(h));
+                count += 1;
+                cur = t;
+            }
+            elems.push(ArgRef::Noun(cur));
+            count += 1;
+            tasks.push(SizeTask::Build { arg, count });
+            for e in elems.into_iter().rev() {
+                tasks.push(SizeTask::Visit(e));
+            }
+            return;
+        }
+        ArgRef::Axis(_) => unreachable!("axis atoms are leaves"),
     };
     match expr {
         Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves handled above"),
+        Nasm::Nock(payload) => {
+            tasks.push(SizeTask::Build { arg, count: 1 });
+            tasks.push(SizeTask::Visit(ArgRef::Noun(payload)));
+        }
         Nasm::Cell {
             first,
             second,
@@ -278,20 +308,25 @@ fn build_shadow<'a>(arg: ArgRef<'a>, children: Vec<Shadow<'a>>) -> Shadow<'a> {
         }
         Some(total + kids.len() - 1)
     };
-    let ArgRef::Expr(expr) = arg else {
-        unreachable!("axis atoms are leaves");
-    };
-    let wide = match expr {
-        Nasm::Cell { .. } => joined(&children).map(|j| j + 2),
-        Nasm::Op(op) => {
-            if children.is_empty() {
-                Some(3 + op.name().len())
-            } else {
-                joined(&children).map(|j| j + 4 + op.name().len())
+    let wide = match arg {
+        // `[e1 e2 …]` — payload cells share the raw-cell wide form.
+        ArgRef::Noun(_) => joined(&children).map(|j| j + 2),
+        ArgRef::Axis(_) => unreachable!("axis atoms are leaves"),
+        ArgRef::Expr(expr) => match expr {
+            Nasm::Cell { .. } => joined(&children).map(|j| j + 2),
+            Nasm::Op(op) => {
+                if children.is_empty() {
+                    Some(3 + op.name().len())
+                } else {
+                    joined(&children).map(|j| j + 4 + op.name().len())
+                }
             }
-        }
-        Nasm::Let { .. } | Nasm::Match { .. } => None,
-        Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves never build"),
+            // `(%nock ` + payload + `)`; payload structural readings
+            // always have a wide form.
+            Nasm::Nock(_) => children[0].wide.map(|w| w + 8),
+            Nasm::Let { .. } | Nasm::Match { .. } => None,
+            Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves never build"),
+        },
     };
     Shadow {
         arg,
@@ -319,20 +354,27 @@ fn wide_text(sh: &Shadow<'_>) -> String {
                     out.push_str(text);
                     continue;
                 }
-                let ArgRef::Expr(expr) = sh.arg else {
-                    unreachable!("axis atoms are leaves");
+                let is_cell_form = match sh.arg {
+                    ArgRef::Noun(_) => true,
+                    ArgRef::Expr(Nasm::Cell { .. }) => true,
+                    ArgRef::Expr(_) => false,
+                    ArgRef::Axis(_) => unreachable!("axis atoms are leaves"),
                 };
-                match expr {
-                    Nasm::Cell { .. } => {
-                        out.push('[');
-                        stack.push(Tok::Str("]"));
-                        for (i, k) in sh.children.iter().enumerate().rev() {
-                            stack.push(Tok::Sh(k));
-                            if i > 0 {
-                                stack.push(Tok::Str(" "));
-                            }
+                if is_cell_form {
+                    out.push('[');
+                    stack.push(Tok::Str("]"));
+                    for (i, k) in sh.children.iter().enumerate().rev() {
+                        stack.push(Tok::Sh(k));
+                        if i > 0 {
+                            stack.push(Tok::Str(" "));
                         }
                     }
+                    continue;
+                }
+                let ArgRef::Expr(expr) = sh.arg else {
+                    unreachable!("cell forms handled above");
+                };
+                match expr {
                     Nasm::Op(op) => {
                         out.push_str("(%");
                         out.push_str(op.name());
@@ -341,6 +383,11 @@ fn wide_text(sh: &Shadow<'_>) -> String {
                             stack.push(Tok::Sh(k));
                             stack.push(Tok::Str(" "));
                         }
+                    }
+                    Nasm::Nock(_) => {
+                        out.push_str("(%nock ");
+                        stack.push(Tok::Str(")"));
+                        stack.push(Tok::Sh(&sh.children[0]));
                     }
                     _ => unreachable!("let/match have no wide form"),
                 }
@@ -424,38 +471,58 @@ fn rend_step<'s, 'a>(
         out.push(format!("{}{text}", pad(ind)));
         return;
     }
+    let is_cell_form = match sh.arg {
+        ArgRef::Noun(_) => true,
+        ArgRef::Expr(Nasm::Cell { .. }) => true,
+        ArgRef::Expr(_) => false,
+        ArgRef::Axis(_) => unreachable!("axis atoms are leaves"),
+    };
+    if is_cell_form {
+        // `[ ` merged with the first element's first line (two
+        // columns, so continuations align); remaining elements at
+        // indent + 2; `]` appended to the final line. Raw cells and
+        // `%nock` payload cells share this layout.
+        let kids = &sh.children;
+        let last = kids.len() - 1;
+        tasks.push(EmitTask::Append("]"));
+        tasks.push(EmitTask::Rend {
+            sh: &kids[last],
+            ind: ind + 2,
+            res: res + 1,
+        });
+        for middle in kids[1..last].iter().rev() {
+            tasks.push(EmitTask::Rend {
+                sh: middle,
+                ind: ind + 2,
+                res: 0,
+            });
+        }
+        tasks.push(EmitTask::MergeOpen {
+            line: out.len(),
+            ind,
+        });
+        tasks.push(EmitTask::Rend {
+            sh: &kids[0],
+            ind: ind + 2,
+            res: 0,
+        });
+        return;
+    }
     let ArgRef::Expr(expr) = sh.arg else {
-        unreachable!("axis atoms are leaves");
+        unreachable!("cell forms handled above");
     };
     match expr {
         Nasm::Atom(_) | Nasm::Axis(_) => unreachable!("leaves handled above"),
-        Nasm::Cell { .. } => {
-            // `[ ` merged with the first element's first line (two
-            // columns, so continuations align); remaining elements at
-            // indent + 2; `]` appended to the final line.
-            let kids = &sh.children;
-            let last = kids.len() - 1;
-            tasks.push(EmitTask::Append("]"));
+        Nasm::Cell { .. } => unreachable!("cell forms handled above"),
+        Nasm::Nock(_) => {
+            // Tall form mirrors a one-argument op; the payload renders
+            // as its structural reading.
+            out.push(format!("{}(%nock", pad(ind)));
+            tasks.push(EmitTask::Append(")"));
             tasks.push(EmitTask::Rend {
-                sh: &kids[last],
+                sh: &sh.children[0],
                 ind: ind + 2,
                 res: res + 1,
-            });
-            for middle in kids[1..last].iter().rev() {
-                tasks.push(EmitTask::Rend {
-                    sh: middle,
-                    ind: ind + 2,
-                    res: 0,
-                });
-            }
-            tasks.push(EmitTask::MergeOpen {
-                line: out.len(),
-                ind,
-            });
-            tasks.push(EmitTask::Rend {
-                sh: &kids[0],
-                ind: ind + 2,
-                res: 0,
             });
         }
         Nasm::Op(op) => {

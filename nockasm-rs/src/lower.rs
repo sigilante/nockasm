@@ -18,10 +18,10 @@
 //! value stack of completed nouns. IR of any depth — machine-emitted
 //! binder chains, or the lift of a hostile jamfile — lowers without
 //! touching the call stack. Two structural facts keep it simple: only
-//! [`Nasm::Atom`] nodes can expand to atoms, so the formula-position
-//! lift is a per-task flag consulted there alone; and binder
-//! environments are immutable once built, so tasks share them by
-//! refcount. One divergence from the reference, deliberately harmless:
+//! [`Nasm::Atom`] and [`Nasm::Nock`] nodes can expand to atoms, so the
+//! formula-position lift is a per-task flag consulted there alone; and
+//! binder environments are immutable once built, so tasks share them
+//! by refcount. One divergence from the reference, deliberately harmless:
 //! environment errors (`#let` shadowing) surface when the binder is
 //! *scheduled*, not after its value expands, so on a source with several
 //! errors a different one may be reported first — the set of accepted
@@ -59,8 +59,9 @@ pub fn expand(src: &str) -> Result<Noun, Error> {
 /// One pending step of the traversal.
 enum Task<'a> {
     /// Expand `node` against `env`. `formula` marks a formula position,
-    /// where a bare atom lifts to `[1 atom]`; only [`Nasm::Atom`] can
-    /// expand to an atom, so the flag is consulted there alone.
+    /// where a bare atom lifts to `[1 atom]`; only [`Nasm::Atom`] and
+    /// [`Nasm::Nock`] can expand to atoms, so the flag is consulted
+    /// there alone.
     Expand {
         node: &'a Nasm,
         env: Env,
@@ -155,6 +156,8 @@ fn resolve_schema(s: &Schema, axes: &mut Axes) -> Result<(), LowerError> {
                 stack.push((tail, base.double_plus(true)));
                 stack.push((head, base.double_plus(false)));
             }
+            // Anonymous position: structure with no name bound.
+            Schema::Hole => {}
         }
     }
     Ok(())
@@ -186,6 +189,18 @@ fn expand_step<'a>(
         Nasm::Atom(a) => {
             let v = Noun::from(a.clone());
             values.push(if formula { Noun::cell(1u64, v) } else { v });
+        }
+        Nasm::Nock(n) => {
+            // Identity: the payload is opaque (see the ast docs) —
+            // never recursed into, validated, or rewritten. The
+            // position's kind still applies to the value, so a bare
+            // atom in formula position lifts, as everywhere.
+            let v = n.clone();
+            values.push(if formula && !v.is_cell() {
+                Noun::cell(1u64, v)
+            } else {
+                v
+            });
         }
         Nasm::Axis(name) => match env.get(name) {
             Some(ax) => values.push(Noun::cell(0u64, ax.clone())),

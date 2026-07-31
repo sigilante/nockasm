@@ -31,7 +31,7 @@ let bytes = jam(&formula);
 assert_eq!(nockasm::nasm_from_jam(&bytes).unwrap(), "(%eq (%slot 2) (%slot 3))\n");
 ```
 
-The pipeline and its laws (IR contract version `NASM_VERSION = 1`,
+The pipeline and its laws (IR contract version `NASM_VERSION = 2`,
 `../doc/compiler-target.md`):
 
 ```
@@ -61,6 +61,14 @@ lower time is rejected at parse (or IR-construction) time here; the
 composed `expand` accepts and rejects exactly the same sources. `lower`
 can only fail on name resolution: unbound axes, schema duplicates,
 `#let` shadowing.
+
+The v2 vocabulary is covered in full: `Nasm::Nock` is the opaque
+formula embed (`(%nock F)` — identity expansion, noun-literal-only
+payload, never validated or rewritten; also the lift's fallback for
+any formula-position subtree it cannot macro-ize, which keeps the lift
+total), and `Schema::Hole` is the anonymous subject position (`_` —
+structure with no name bound, so machine-generated schemas mirror
+subject shape without inventing names).
 
 Nouns are cheap to clone (reference-counted cells with cached
 structural hashes, which is what makes `jam`'s backreference table

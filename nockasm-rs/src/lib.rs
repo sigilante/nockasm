@@ -115,4 +115,8 @@ pub use render::render;
 /// Version of the target-IR contract: the `$nasm` node set, the lowering
 /// equations, and the canonical rendering rules. Append-only; shared with
 /// the Python (`NASM_VERSION`) and Hoon (`nasm-version`) implementations.
-pub const NASM_VERSION: u32 = 1;
+/// v2: the `%nock` opaque-embed node, `_` anonymous schema positions,
+/// and the lift fallback moving from structural raw cells to `%nock`
+/// (pure vocabulary extension: every v1 IR value lowers and renders
+/// exactly as before).
+pub const NASM_VERSION: u32 = 2;

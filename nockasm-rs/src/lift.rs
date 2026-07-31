@@ -5,10 +5,14 @@
 //! asserts the root is a formula and the lift propagates that assumption
 //! through Nock's positional grammar. Cell heads 0–11 with well-shaped
 //! tails lift to named ops; a cell head means cons-formula (both halves
-//! lift); anywhere the shape is not a valid formula the node falls back
-//! to a structural raw cell, right-spine flattened. No intent is ever
-//! claimed: constants are `%const` (never `%arm`), axes are `%slot`
-//! (never the core aliases), and no macro skeleton is recognized.
+//! lift); anywhere a formula-position subtree cannot be macro-ized (an
+//! atom in formula position, an opcode head above 11, a malformed tail)
+//! the node falls back to an opaque `%nock` embed, making the lift total
+//! as a formula reader. Data positions (opcode-1 payloads, dynamic hint
+//! tags) stay structural raw cells: they are nouns, not formulas, so
+//! `%nock` would be a false claim. No intent is ever claimed: constants
+//! are `%const` (never `%arm`), axes are `%slot` (never the core
+//! aliases), and no macro skeleton is recognized.
 //!
 //! Soundness law: `lower(None, &lift(f)) == f` for every noun `f`.
 //!
@@ -87,11 +91,13 @@ pub fn lift(n: &Noun) -> Nasm {
 /// One formula-position read: push a finished leaf, or schedule an
 /// assembly frame under its children (leftmost child on top, so it
 /// executes first). The shape guards mirror the reference lift exactly;
-/// every ill-shaped case falls back to [`ast_step`] on the whole node.
+/// every ill-shaped case falls back to an opaque `%nock` embed of the
+/// whole node.
 fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>) {
     let (h, t) = match n.view() {
-        NounRef::Atom(a) => {
-            values.push(Nasm::Atom(a.clone()));
+        NounRef::Atom(_) => {
+            // An atom is never a formula.
+            values.push(Nasm::Nock(n.clone()));
             return;
         }
         NounRef::Cell(h, t) => (h, t),
@@ -106,7 +112,7 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
     match opcode.as_u64() {
         Some(0) => match t.view() {
             NounRef::Atom(ax) => values.push(Nasm::Op(Op::Slot(ax.clone()))),
-            NounRef::Cell(..) => ast_step(n, tasks, values),
+            NounRef::Cell(..) => values.push(Nasm::Nock(n.clone())),
         },
         Some(1) => {
             tasks.push(Task::Assemble(Frame::Const));
@@ -118,7 +124,7 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                 tasks.push(Task::Lift(f));
                 tasks.push(Task::Lift(s));
             }
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(3) if t.is_cell() => {
             tasks.push(Task::Assemble(Frame::Isa));
@@ -134,7 +140,7 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                 tasks.push(Task::Lift(y));
                 tasks.push(Task::Lift(x));
             }
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(6) => match t.as_cell() {
             Some((c, branches)) if c.is_cell() => match branches.as_cell() {
@@ -144,9 +150,9 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                     tasks.push(Task::Lift(th));
                     tasks.push(Task::Lift(c));
                 }
-                _ => ast_step(n, tasks, values),
+                _ => values.push(Nasm::Nock(n.clone())),
             },
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(7) => match t.as_cell() {
             Some((x, y)) if x.is_cell() && y.is_cell() => {
@@ -154,7 +160,7 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                 tasks.push(Task::Lift(y));
                 tasks.push(Task::Lift(x));
             }
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(8) => match t.as_cell() {
             Some((x, y)) if x.is_cell() && y.is_cell() => {
@@ -162,7 +168,7 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                 tasks.push(Task::Lift(y));
                 tasks.push(Task::Lift(x));
             }
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(9) => match t.as_cell() {
             Some((ax, f)) if f.is_cell() => match ax.view() {
@@ -170,9 +176,9 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                     tasks.push(Task::Assemble(Frame::Call(ax.clone())));
                     tasks.push(Task::Lift(f));
                 }
-                NounRef::Cell(..) => ast_step(n, tasks, values),
+                NounRef::Cell(..) => values.push(Nasm::Nock(n.clone())),
             },
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(10) => match t.as_cell() {
             Some((spec, f)) if f.is_cell() => match spec.as_cell() {
@@ -182,11 +188,11 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                         tasks.push(Task::Lift(f));
                         tasks.push(Task::Lift(v));
                     }
-                    NounRef::Cell(..) => ast_step(n, tasks, values),
+                    NounRef::Cell(..) => values.push(Nasm::Nock(n.clone())),
                 },
-                _ => ast_step(n, tasks, values),
+                _ => values.push(Nasm::Nock(n.clone())),
             },
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
         Some(11) => match t.as_cell() {
             Some((tag, f)) if tag.is_atom() && f.is_cell() => {
@@ -203,11 +209,11 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
                     tasks.push(Task::Lift(clue));
                     tasks.push(Task::Ast(tag));
                 }
-                _ => ast_step(n, tasks, values),
+                _ => values.push(Nasm::Nock(n.clone())),
             },
-            _ => ast_step(n, tasks, values),
+            _ => values.push(Nasm::Nock(n.clone())),
         },
-        _ => ast_step(n, tasks, values),
+        _ => values.push(Nasm::Nock(n.clone())),
     }
 }
 

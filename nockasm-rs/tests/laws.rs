@@ -57,7 +57,7 @@ fn lift_soundness_over_corpus() {
 #[test]
 fn lift_fallback_zoo() {
     let cases: Vec<(&str, Noun)> = vec![
-        ("atom in formula position stays raw", noun![2 5 6]),
+        ("atom in formula position embeds opaque", noun![2 5 6]),
         ("opcode head above 11", noun![12 3]),
         ("slot of a cell", noun![0 2 3]),
         ("bare atom", Noun::from(42u64)),

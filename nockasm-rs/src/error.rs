@@ -87,6 +87,9 @@ pub enum ParseErrorKind {
         /// The opcode name, without `%`.
         op: &'static str,
     },
+    /// `(%nock [x])` or `(%nock [])` — the payload cell needs at least
+    /// two elements.
+    NockPayloadTooFew,
     /// `#name` where `name` is not a macro.
     UnknownMacro(String),
     /// `#match` with no `_ =>` default.
@@ -121,6 +124,9 @@ impl fmt::Display for ParseError {
             K::UnknownOpcode(name) => write!(f, "unknown opcode %{name}")?,
             K::OpArity { op, want, got } => write!(f, "%{op} takes {want} args, got {got}")?,
             K::AxisArgNotAtom { op } => write!(f, "%{op}: axis argument must be an atom literal")?,
+            K::NockPayloadTooFew => {
+                write!(f, "(%nock ...) payload cell needs at least 2 elements")?
+            }
             K::UnknownMacro(name) => write!(f, "unknown macro #{name}")?,
             K::MatchNeedsDefault => write!(f, "#match requires a `_ => ...` default")?,
             K::MatchDuplicateDefault => write!(f, "duplicate _ in #match")?,

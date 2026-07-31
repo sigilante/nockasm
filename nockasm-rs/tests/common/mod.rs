@@ -38,6 +38,19 @@ pub const GOOD: &[(&str, &str)] = &[
     ("raw2", "[4 0 1]"),
     ("raw-nested", "[8 [1 0] 4 0 6]"),
     ("raw-mixed", "[4 (%slot 1)]"),
+    // %nock opaque embeds: identity expansion, payload untouched
+    ("nock-atom", "(%nock 42)"),
+    ("nock-cell", "(%nock [4 0 1])"),
+    ("nock-hint", "(%nock [11 'fast' 0 1])"),
+    ("nock-partial", "(%nock [6 1 2])"),
+    ("nock-deep", "(%nock [8 [1 0] 4 0 6])"),
+    ("nock-in-formula", "(%comp (%nock [0 1]) (%inc (%self)))"),
+    ("nock-atom-lifts", "(%inc (%nock 55))"),
+    (
+        "nock-tall",
+        "(%nock [123.456.789.012 987.654.321.098 111.222.333.444 \
+         555.666.777.888 999.888.777.666])",
+    ),
     // schemas
     ("sch-single", ":subject .x  .x"),
     ("sch-pair-h", ":subject {.x .y}  .x"),
@@ -50,6 +63,11 @@ pub const GOOD: &[(&str, &str)] = &[
     ("sch-nest-b", ":subject {{.a .b} .c}  .b"),
     ("sch-nest-c", ":subject {{.a .b} .c}  .c"),
     ("sch-op", ":subject {.x .y} (%eq .x .y)"),
+    // anonymous positions: structure with no name bound
+    ("sch-hole-tail", ":subject {.a _}  .a"),
+    ("sch-hole-head", ":subject {_ .b}  .b"),
+    ("sch-hole-multi", ":subject {_ .b _}  .b"),
+    ("sch-hole-nested", ":subject {{.a _} .c}  (%eq .a .c)"),
     // #let
     ("let-single", ":subject .x  #let .d = (%inc .x) in (%eq .d .x)"),
     ("let-pair", ":subject {.x .y}  #let .d = (%inc .x) in (%eq .d .y)"),

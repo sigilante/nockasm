@@ -12,6 +12,7 @@
 use crate::ast::{MatchArm, Nasm, Op, Program, Schema};
 use crate::error::{ParseError, ParseErrorKind, Pos};
 use crate::lex::{tokenize, Tok, Token};
+use crate::noun::{Noun, NounRef};
 
 /// Maximum expression/schema nesting depth.
 ///
@@ -114,6 +115,10 @@ impl Parser {
                 let n = n.clone();
                 self.advance();
                 Ok(Schema::Leaf(n))
+            }
+            Tok::Under => {
+                self.advance();
+                Ok(Schema::Hole)
             }
             Tok::LCurly => {
                 let open_pos = t.pos;
@@ -233,6 +238,17 @@ impl Parser {
                 _ => return Err(self.unexpected("a %opcode after '('", t)),
             },
         };
+        if name == "nock" {
+            let payload = self.parse_noun_literal()?;
+            match self.peek() {
+                None => return Err(self.eof("')'")),
+                Some(t) if t.tok == Tok::RParen => {
+                    self.advance();
+                }
+                Some(t) => return Err(self.unexpected("')'", t)),
+            }
+            return Ok(Nasm::Nock(payload));
+        }
         let mut args = Vec::new();
         loop {
             match self.peek() {
@@ -245,6 +261,56 @@ impl Parser {
             }
         }
         Ok(Nasm::Op(build_op(&name, args, name_pos)?))
+    }
+
+    /// The `(%nock ...)` payload: atom literals and `[...]` cells of
+    /// noun literals only — never an expression. The payload is data
+    /// to the assembler; nothing in it expands.
+    fn parse_noun_literal(&mut self) -> Result<Noun, ParseError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(ParseError {
+                kind: ParseErrorKind::TooDeep,
+                pos: None,
+            });
+        }
+        self.depth += 1;
+        let r = self.parse_noun_literal_inner();
+        self.depth -= 1;
+        r
+    }
+
+    #[inline(never)]
+    fn parse_noun_literal_inner(&mut self) -> Result<Noun, ParseError> {
+        let Some(t) = self.peek() else {
+            return Err(self.eof("a noun literal in (%nock ...)"));
+        };
+        match &t.tok {
+            Tok::Num(a) | Tok::Cord(a) => {
+                let a = a.clone();
+                self.advance();
+                Ok(Noun::from(a))
+            }
+            Tok::LBrack => {
+                let open_pos = t.pos;
+                self.advance();
+                let mut elems = Vec::new();
+                loop {
+                    match self.peek() {
+                        None => return Err(self.eof("']' or a noun literal")),
+                        Some(t) if t.tok == Tok::RBrack => {
+                            self.advance();
+                            break;
+                        }
+                        Some(_) => elems.push(self.parse_noun_literal()?),
+                    }
+                }
+                Noun::autocons(elems).ok_or(ParseError {
+                    kind: ParseErrorKind::NockPayloadTooFew,
+                    pos: Some(open_pos),
+                })
+            }
+            _ => Err(self.unexpected("a noun literal in (%nock ...)", t)),
+        }
     }
 
     fn parse_macro(&mut self) -> Result<Nasm, ParseError> {
@@ -402,9 +468,19 @@ fn build_op(name: &str, mut args: Vec<Nasm>, pos: Pos) -> Result<Op, ParseError>
     // Borrow-and-clone rather than destructure: Nasm implements Drop
     // (iterative teardown), which forbids moving fields out of it.
     // Cloning the atom is cheap (inline u64 or a refcount bump).
+    // A `(%nock ...)` embed of an atom is also accepted: it is the one
+    // other expression that expands to an atom, and the reference
+    // implementations accept any such expression in axis position.
     let axis = |e: Nasm| -> Result<crate::noun::Atom, ParseError> {
         match &e {
             Nasm::Atom(a) => Ok(a.clone()),
+            Nasm::Nock(n) => match n.view() {
+                NounRef::Atom(a) => Ok(a.clone()),
+                NounRef::Cell(..) => Err(ParseError {
+                    kind: ParseErrorKind::AxisArgNotAtom { op },
+                    pos: Some(pos),
+                }),
+            },
             _ => Err(ParseError {
                 kind: ParseErrorKind::AxisArgNotAtom { op },
                 pos: Some(pos),

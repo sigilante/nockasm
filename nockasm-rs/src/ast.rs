@@ -13,7 +13,7 @@
 use std::fmt;
 
 use crate::error::InvalidName;
-use crate::noun::Atom;
+use crate::noun::{Atom, Noun};
 
 /// A schema or binder name: `[A-Za-z_][A-Za-z0-9_-]*`, stored without the
 /// leading dot.
@@ -53,16 +53,27 @@ impl fmt::Display for Name {
     }
 }
 
-/// A `:subject` axis schema (`$sema`): a named leaf or a pair of schemas.
+/// A `:subject` axis schema (`$sema`): a named leaf, an anonymous
+/// position, or a pair of schemas.
 ///
 /// Flat `{.a .b .c}` groups parse right-leaning by Hoon convention:
-/// `Pair(a, Pair(b, c))`.
+/// `Pair(a, Pair(b, c))`. Schemas carry names, structure, and axes
+/// only — never type information; a compiler holding a layout tree and
+/// a name→axis map projects them into `Schema` values mechanically.
+/// Name uniqueness is the producer's obligation (duplicates are a
+/// [`DuplicateSchemaName`](crate::LowerError::DuplicateSchemaName)
+/// error at resolution, with no shadowing semantics); holes are not
+/// names and repeat freely.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Schema {
     /// `.name` — this whole subtree of the subject.
     Leaf(Name),
     /// `{head tail}` — a cell of two sub-schemas.
     Pair(Box<Schema>, Box<Schema>),
+    /// `_` — an anonymous position: subject structure with no name
+    /// bound. Machine-generated schemas mirror subject shape and leave
+    /// unnamed axes as holes.
+    Hole,
 }
 
 /// A parsed program: an optional `:subject` schema and one expression.
@@ -127,6 +138,18 @@ pub enum Nasm {
         /// The required `_ =>` default — a formula position.
         default: Box<Nasm>,
     },
+    /// `(%nock F)` — an already-formed Nock formula embedded as a raw
+    /// noun. Boundary embedding for foreign-produced formulas (FFI
+    /// glue, precompiled fragments) — not a general escape hatch.
+    /// Expansion is identity: the payload is never recursed into,
+    /// validated, or rewritten; well-formedness is the producer's
+    /// responsibility, and tooling treats the payload as opaque. In
+    /// text the payload is a noun *literal* (atoms and `[...]` cells
+    /// only, never an expression); in an argument position the
+    /// enclosing op's kind applies to the expanded value as for any
+    /// expression (a bare-atom payload in a formula position lifts to
+    /// `[1 atom]`).
+    Nock(Noun),
 }
 
 impl Nasm {
@@ -143,7 +166,9 @@ impl Nasm {
     }
 
     fn is_leaf(&self) -> bool {
-        matches!(self, Nasm::Atom(_) | Nasm::Axis(_))
+        // No `Nasm` children. `Nock` holds a `Noun`, whose own drop is
+        // already iterative.
+        matches!(self, Nasm::Atom(_) | Nasm::Axis(_) | Nasm::Nock(_))
     }
 }
 
@@ -158,7 +183,7 @@ fn harvest(node: &mut Nasm, stack: &mut Vec<Nasm>) {
         }
     }
     match node {
-        Nasm::Atom(_) | Nasm::Axis(_) => {}
+        Nasm::Atom(_) | Nasm::Axis(_) | Nasm::Nock(_) => {}
         Nasm::Cell {
             first,
             second,
@@ -312,12 +337,15 @@ impl Op {
     }
 }
 
-/// A borrowed opcode argument: an expression or an axis atom. Axis atoms
-/// render exactly as atom literals do.
+/// A borrowed opcode argument: an expression, an axis atom, or a
+/// structural read of a `%nock` payload subtree. Axis atoms render
+/// exactly as atom literals do; payload nouns render as their
+/// structural reading (atoms and right-spine-flattened raw cells).
 #[derive(Clone, Copy)]
 pub(crate) enum ArgRef<'a> {
     Expr(&'a Nasm),
     Axis(&'a Atom),
+    Noun(&'a Noun),
 }
 
 impl Op {

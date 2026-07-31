@@ -121,6 +121,59 @@ fn match_form() {
 }
 
 #[test]
+fn nock_embeds() {
+    // Identity: (%nock F) expands to exactly F — no recursion, no
+    // validation, no rewriting. Hint-laden and intentionally-partial
+    // payloads must survive untouched.
+    assert_eq!(flat("(%nock 42)"), "42");
+    assert_eq!(flat("(%nock [4 0 1])"), "[4 0 1]");
+    assert_eq!(flat("(%nock [11 'fast' 0 1])"), "[11 1953718630 0 1]");
+    assert_eq!(flat("(%nock [6 1 2])"), "[6 1 2]");
+    assert_eq!(flat("(%nock [8 [1 0] 4 0 6])"), "[8 [1 0] 4 0 6]");
+    // In an argument position the enclosing op's kind applies to the
+    // result, as for any expression: a cell passes through, an atom
+    // lifts, and an atom payload is accepted in axis position.
+    assert_eq!(
+        flat("(%comp (%nock [0 1]) (%inc (%self)))"),
+        "[7 [0 1] 4 0 1]"
+    );
+    assert_eq!(flat("(%inc (%nock 55))"), "[4 1 55]");
+    assert_eq!(flat("(%slot (%nock 3))"), "[0 3]");
+}
+
+#[test]
+fn anonymous_schema_positions() {
+    // '_' is structure with no name bound; generated schemas depend
+    // on it, and holes repeat freely.
+    assert_eq!(flat(":subject {.a _}  .a"), "[0 2]");
+    assert_eq!(flat(":subject {_ .b}  .b"), "[0 3]");
+    assert_eq!(flat(":subject {_ .b _}  .b"), "[0 6]");
+    assert_eq!(flat(":subject {{.a _} .c}  (%eq .a .c)"), "[5 [0 4] 0 3]");
+}
+
+#[test]
+fn schema_constructed_as_data() {
+    // The typed IR is the contract: a schema built directly as data
+    // (no text) must behave exactly like its text-parsed equivalent —
+    // emitters project layout trees into Schema values mechanically.
+    use nockasm::{lower, Name, Nasm, Op, Schema};
+    let schema = Schema::Pair(
+        Box::new(Schema::Leaf(Name::new("a").unwrap())),
+        Box::new(Schema::Hole),
+    );
+    let ast = Nasm::Let {
+        name: Name::new("d").unwrap(),
+        value: Box::new(Nasm::Op(Op::Inc(Box::new(Nasm::Axis(
+            Name::new("a").unwrap(),
+        ))))),
+        body: Box::new(Nasm::Axis(Name::new("d").unwrap())),
+    };
+    let direct = lower(Some(&schema), &ast).expect("lowers");
+    let via_text = expand(":subject {.a _} #let .d = (%inc .a) in .d").expect("expands");
+    assert_eq!(direct, via_text);
+}
+
+#[test]
 fn comments() {
     assert_eq!(
         flat("\n  ; this is a comment\n  (%inc (%slot 1))  ; and so is this\n"),
@@ -204,6 +257,18 @@ fn errors() {
     });
     parse_err("   ; nothing here\n", |k| {
         matches!(k, K::UnexpectedEof { .. })
+    });
+    // (%nock ...) payloads are noun literals, exactly one, >= 2 cell
+    // elements — never expressions.
+    parse_err("(%nock)", |k| matches!(k, K::UnexpectedToken { .. }));
+    parse_err("(%nock 1 2)", |k| matches!(k, K::UnexpectedToken { .. }));
+    parse_err("(%nock (%inc (%self)))", |k| {
+        matches!(k, K::UnexpectedToken { .. })
+    });
+    parse_err("(%nock .a)", |k| matches!(k, K::UnexpectedToken { .. }));
+    parse_err("(%nock [5])", |k| matches!(k, K::NockPayloadTooFew));
+    parse_err("(%slot (%nock [1 2]))", |k| {
+        matches!(k, K::AxisArgNotAtom { op: "slot" })
     });
 }
 
