@@ -1,7 +1,12 @@
 # Nockasm as a compiler target
 
-*Spec, v0.3 — 2026-07-07. M0 and M0.5 are implemented; later phases
-are design.*
+*Spec, v0.4 — 2026-07-31. M0 and M0.5 are implemented; later phases
+are design. v0.4 (IR version 2): the types factor into
+`/sur/nockasm` with the vocabulary as a self-parameterized builder;
+the `%nock` opaque embed; `_` anonymous schema positions; the lift
+fallback moves from structural raw cells to `%nock`. All of it is
+pure vocabulary extension — every v1 IR value lowers and renders
+exactly as before.*
 
 Nockasm today is a one-way street: a human writes `.nasm`, `expand`
 produces canonical Nock. This document specs the other direction — a
@@ -43,9 +48,13 @@ typed AST ─emit→ $nasm IR ─render→ .nasm text     (artifact)
 ```
 
 `emit` lives in Jock and is Jock's business. `$nasm`, `render`, and
-`lower` live in this library and are the contract. Because
-`lib/nockasm.hoon` depends only on the Hoon stdlib, Jock (a NockApp
-built with hoonc) can vendor it directly into its `hoon/lib` tree.
+`lower` are the contract. The types (`desk/sur/nockasm.hoon`) depend
+only on the Hoon stdlib; the implementation (`desk/lib/nockasm.hoon`)
+depends only on the stdlib and the sur. Jock (a NockApp built with
+hoonc) vendors the sur into `hoon/sur` — and only if it also wants
+`parse`/`lower`/`render`/`lift`, the lib into `hoon/lib`. A toolchain
+that merely constructs or inspects IR vendors the types without the
+implementation.
 
 Two integration levels:
 
@@ -56,29 +65,58 @@ Two integration levels:
   emitted assembly is compact rather than drowning in
   `%push`/`%call` scaffolding. **Conditional** — see §7.
 
-## 3. The IR contract (M0 — implemented)
+## 3. The IR contract (M0 — implemented; v2 shape)
 
-The target IR is the existing `$nasm` type, promoted from internal AST
-to public interface:
+The target IR is the `$nasm` type, promoted from internal AST to
+public interface and factored into `desk/sur/nockasm.hoon`. The
+vocabulary is expressed as a builder parameterized over its own
+recursion; plain `$nasm` is its self-instantiation:
 
 ```hoon
-+$  nasm
+++  nasm-of                                ::  the vocabulary
+  |$  [self]
   $%  [%atom p=@]                          ::  literal (never lifted here)
       [%axis p=@t]                         ::  named leg reference
-      [%cell p=(list nasm)]                ::  raw cell, structural
-      [%op p=@t q=(list nasm)]             ::  (%opcode ...) application
-      [%let p=@t q=nasm r=nasm]            ::  #let p = q in r
-      [%match p=nasm q=(list mcas) r=nasm] ::  #match with default r
+      [%cell p=(list self)]                ::  raw cell, structural
+      [%op p=@t q=(list self)]             ::  (%opcode ...) application
+      [%let p=@t q=self r=self]            ::  #let p = q in r
+      [%match p=self q=(list (mcas-of self)) r=self]
+      [%nock p=*]                          ::  opaque formula embed
   ==
-+$  mcas  [p=nasm q=nasm]                  ::  one #match case
+++  mcas-of  |$([self] [p=self q=self])    ::  one #match case
++$  nasm  $~([%atom 0] (nasm-of nasm))     ::  the plain instantiation
++$  mcas  (mcas-of nasm)
 ```
+
+An annotated instantiation ties the knot through its own wrapper —
+`+$  noted  $~([*note [%atom 0]] [=note node=(nasm-of noted)])`, the
+explicit `$~` bunt being load-bearing (without it Hoon's bunt
+derivation recurses forever) — so a debugger's span-carrying AST or
+a provenance-carrying emitter IR is a first-class citizen of the
+vocabulary, not a fork of it: every case, including any appended
+later, is inherited by construction. `desk/tests/lib/nockasm.hoon`
+(`test-vocabulary-instantiation`) pins the pattern.
+
+**`%nock` — the opaque formula embed.** `[%nock p=*]` holds an
+already-formed Nock formula as a raw noun. Its purpose is boundary
+embedding for foreign-produced formulas (FFI glue, precompiled
+fragments); it is not a general escape hatch. Its expansion equation
+is **identity**: `(%nock f)` lowers to exactly `f`. The expander
+never recurses into, validates, or rewrites the payload —
+well-formedness is the producer's responsibility, and tooling treats
+the payload as opaque (hint-laden and intentionally-partial formulas
+must survive untouched). In an argument position the enclosing op's
+kind applies to the expanded value as for any expression (a bare-atom
+result in a formula position lifts to `[1 atom]`). In text, the
+payload is a *noun literal* — atom literals and `[...]` cells only,
+never an expression.
 
 Public arms (`lib/nockasm.hoon`), with Python equivalents in
 `nockasm.py` (`parse`, `lower`, `render`, `NASM_VERSION`):
 
 ```hoon
-++  nasm-version  ::  1; version of the node set, lowering equations,
-                  ::  and rendering rules. append-only.
+++  nasm-version  ::  2; version of the node set, lowering equations,
+                  ::  and rendering rules. append-only. (in the sur)
 ++  parse   ::  @t -> [sch=(unit sema) ast=nasm]
 ++  lower   ::  [sch=(unit sema) ast=nasm] -> *   IR to Nock
 ++  render  ::  [sch=(unit sema) ast=nasm] -> @t  IR to canonical text
@@ -95,6 +133,41 @@ Checked by `tests/test_render.py` (round-trip + idempotence through parse +
 transcriptions) and by `tests/test_hoon.py` (Hoon `render` output is
 **byte-identical** to the Python renderer's, and the Hoon round-trip
 matches, for every corpus case).
+
+**Subject schemas (`$sema`).** Schemas are spec surface and live in
+the sur beside `$nasm`:
+
+```hoon
++$  sema
+  $%  [%leaf p=@t]                         ::  named position
+      [%pair p=sema q=sema]                ::  nesting, arbitrary depth
+      [%hole ~]                            ::  anonymous position (_)
+  ==
+```
+
+The `:subject {...}` text form parses to a `$sema` value, but text is
+a convenience, not the interface: a downstream compiler holds a
+binary tree mirroring subject shape plus a name→axis map, and
+projects those into `$sema` mechanically — construction as data is
+the contract, and the differential suites pin data-constructed
+schemas against their text-parsed equivalents. Three requirements
+follow:
+
+- **Anonymous positions.** Generated schemas mirror subject shape
+  and leave unnamed axes as holes: `[%hole ~]`, rendered `_`
+  (Python: the marker string `'_'`, distinguishable from names,
+  which always carry their leading dot). Holes are structure with no
+  name bound; they bind nothing at resolution.
+- **Names and axes only.** `$sema` carries names, structure, and
+  axes — never type information of any kind (not Hoon `$type`, not
+  anything else). A downstream type system projects onto `$sema` by
+  dropping types.
+- **Uniqueness.** A name may appear at most once in a schema.
+  Uniqueness is the **producer's obligation** — an emitter
+  uniquifies before constructing `$sema`. The expander rejects
+  duplicates at resolution time (`%duplicate-schema-name` crash) and
+  defines no shadowing semantics. Holes are not names and repeat
+  freely.
 
 **Emitter obligations.** The target stays strict; the compiler adapts:
 
@@ -122,8 +195,11 @@ The rules, as implemented:
   Rendering is a function of the *value* — the IR does not remember
   source spelling.
 - **Wide forms** (single line): atom and axis literals; cells
-  `[e1 e2 …]`; ops `(%name e1 …)`. `#let`/`#match` have no wide form,
-  so anything containing them renders tall.
+  `[e1 e2 …]`; ops `(%name e1 …)`; `%nock` embeds
+  `(%nock <noun-literal>)`, whose payload renders as its structural
+  reading (atoms and right-spine-flattened raw cells) and therefore
+  always has a wide form. `#let`/`#match` have no wide form, so
+  anything containing them renders tall.
 - **Width**: an expression renders wide iff it has a wide form and
   `indent + length + reserve ≤ 76`, where *reserve* is the number of
   closing-delimiter characters an enclosing form will append to its
@@ -132,7 +208,9 @@ The rules, as implemented:
   (two columns, so continuations align); remaining elements at
   indent+2; `]` appended to the final line.
 - **Tall op**: `(%name` on its own line; arguments at indent+2; `)`
-  appended to the final line.
+  appended to the final line. A `%nock` embed too wide for one line
+  renders the same way: `(%nock` on its own line, the payload's
+  structural reading at indent+2, `)` appended.
 - **Tall `#let`**: `#let .n = V in` on one line when `V`'s wide form
   fits; else `#let .n =`, `V` at indent+2, `in` at the same indent;
   body at the same indent as `#let`.
@@ -143,7 +221,8 @@ The rules, as implemented:
   The default renders as an arm with pattern `_`, last. `}` on its own
   line at the match's indent.
 - **Schemas** always render wide; right spines flatten
-  (`{.a .b .c}`, never `{.a {.b .c}}`).
+  (`{.a .b .c}`, never `{.a {.b .c}}`); anonymous positions render
+  as `_`.
 - **Program**: `:subject SCH` line when a schema is present, then the
   expression at indent 0; every line newline-terminated.
 - **Comments** are not represented in the IR and never emitted
@@ -165,10 +244,19 @@ reverse). Concretely:
 
 - Cell heads 0–11 with well-shaped tails lift to named ops; formula
   positions recurse; a cell head means cons-formula (both halves
-  lift).
-- **Anywhere the shape is not a valid formula** — an atom in a formula
-  position (`[2 5 6]`), an opcode head above 11, a cell axis — the
-  node falls back to a structural raw cell, right-spine flattened.
+  lift, so a readable half is still read even when its sibling is
+  not).
+- **Anywhere a formula-position subtree cannot be macro-ized** — an
+  atom in a formula position (`[2 5 6]`, or a bare atom at the
+  root), an opcode head above 11, a cell axis, a malformed tail —
+  the node falls back to an opaque `%nock` embed. This makes the
+  lift **total** as a formula reader: every subtree is either read
+  as a formula or explicitly marked as not one, rather than
+  silently re-dressed as structure. (v1 fell back to structural raw
+  cells; same soundness, weaker claim.)
+- **Data positions stay structural**: opcode-1 payloads and dynamic
+  hint tags lift to raw cells/atoms, not `%nock` — they are nouns,
+  not formulas, and `%nock` there would be a false claim.
 - **No intent is ever claimed**: constants are `%const` (never
   `%arm`), axes are `%slot` (never the core aliases), and no macro
   skeleton is recognized. Opcode-1 payloads render as pure data even
@@ -318,6 +406,7 @@ Two tiers, both optional, neither in the IR:
 |-------|-------------|------|--------|
 | M0 | `parse`/`lower`/`render` public, `nasm-version`, round-trip + parity tests | nockasm | **done** |
 | M0.5 | `jam`/`cue`, the deterministic `lift`, `nasm-from-jam` + CLI, soundness + parity tests | nockasm | **done** |
+| v0.4 | `/sur/nockasm` factoring, `+nasm-of` builder, `%nock` embed, `$sema` holes + contract, IR version 2 | nockasm | **done** |
 | M1 | Jock backend: `emit : typed-ast -> nasm` behind a flag; differential CI vs legacy codegen (bit-identical nouns); `.nasm` artifacts in review | jock-lang | design |
 | M2 | The L2 decision, from M1's artifacts; if gated in: the frozen macro batch + benchmark-rewrite acceptance | nockasm | gated |
 | M3 | Provenance comments, `%spot` debug mode | both | design |

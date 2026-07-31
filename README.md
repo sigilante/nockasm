@@ -4,6 +4,8 @@
 
 Nock Assembly is a thin macro over [Nock ISA](https://nock.is) designed to make the language more legible for pedagogical purposes.
 
+**Status ~2026.7.31:  Nockasm is considered *frozen* unless Nock ISA decrements to 3K or a bug is found.**
+
 ## Design
 
 | | |
@@ -93,7 +95,11 @@ if cell.startswith(':asm'):
 `desk/lib/nockasm.hoon` is a port of the expander to Hoon: `.nasm` source
 in as a cord, Nock formula out as a noun. The parser is written in the
 `++rule` combinator idiom; errors crash with tagged traces
-(`%unbound-axis`, `%unknown-opcode`, `%let-shadows`, …).
+(`%unbound-axis`, `%unknown-opcode`, `%let-shadows`, …). The shared
+types — the `+nasm-of` vocabulary builder, `$nasm`, `$sema`,
+`+nasm-version` — live in `desk/sur/nockasm.hoon`, which the library
+imports; downstream toolchains that only construct or inspect IR
+vendor the sur without the implementation.
 
 ```
 > =nasm -build-file %/lib/nockasm/hoon
@@ -123,7 +129,10 @@ soundness law `lower(lift(f)) == f`. See `doc/compiler-target.md`.
 
 ## Use in a NockApp
 
-The library compiles unmodified under `hoonc` and is registered in the
+The library compiles unmodified under `hoonc` (vendor
+`desk/sur/nockasm.hoon` into `hoon/sur` and `desk/lib/nockasm.hoon`
+into `hoon/lib`; `hoonc` resolves the `/-` import from the sur tree)
+and is registered in the
 [typhoon](https://github.com/sigilante/typhoon) registry, so any
 [Nockup](https://github.com/nockchain/nockchain/tree/master/crates/nockup)
 project can depend on it by name:

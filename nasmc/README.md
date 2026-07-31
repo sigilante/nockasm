@@ -31,8 +31,9 @@ cargo build --release            # -> target/release/nasmc
 ```
 
 The kernel is embedded as `bootstrap/nasmc.jam`. After changing the
-kernel hoon (or the library — `hoon/lib/nockasm.hoon` is a symlink to
-`../../desk/lib/nockasm.hoon`), regenerate it with hoonc and rebuild:
+kernel hoon (or the library — `hoon/lib/nockasm.hoon` and
+`hoon/sur/nockasm.hoon` are symlinks into `../../desk/`), regenerate
+it with hoonc and rebuild:
 
 ```bash
 hoonc --new hoon/apps/nasmc/nasmc.hoon hoon
