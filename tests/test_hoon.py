@@ -13,10 +13,8 @@ import os
 import sys
 
 # _testkit first: importing it puts the repo root on sys.path (see there).
-from _testkit import ROOT, desk_file, run_eval
+from _testkit import ROOT, hoon_lib_source, run_eval
 from nockasm import expand_to_noun, jam, lift, parse, render
-
-LIB = desk_file('lib', 'nockasm.hoon')
 
 
 # ----------------------------------------------------------------------
@@ -104,6 +102,17 @@ GOOD = [
     ('raw2', '[4 0 1]'),
     ('raw-nested', '[8 [1 0] 4 0 6]'),
     ('raw-mixed', '[4 (%slot 1)]'),
+    # %nock opaque embeds: identity expansion, payload untouched
+    ('nock-atom', '(%nock 42)'),
+    ('nock-cell', '(%nock [4 0 1])'),
+    ('nock-hint', "(%nock [11 'fast' 0 1])"),
+    ('nock-partial', '(%nock [6 1 2])'),
+    ('nock-deep', '(%nock [8 [1 0] 4 0 6])'),
+    ('nock-in-formula', '(%comp (%nock [0 1]) (%inc (%self)))'),
+    ('nock-atom-lifts', '(%inc (%nock 55))'),
+    ('nock-tall',
+     '(%nock [123.456.789.012 987.654.321.098 111.222.333.444 '
+     '555.666.777.888 999.888.777.666])'),
     # schemas
     ('sch-single', ':subject .x  .x'),
     ('sch-pair-h', ':subject {.x .y}  .x'),
@@ -116,6 +125,11 @@ GOOD = [
     ('sch-nest-b', ':subject {{.a .b} .c}  .b'),
     ('sch-nest-c', ':subject {{.a .b} .c}  .c'),
     ('sch-op', ':subject {.x .y} (%eq .x .y)'),
+    # anonymous positions: structure with no name bound
+    ('sch-hole-tail', ':subject {.a _}  .a'),
+    ('sch-hole-head', ':subject {_ .b}  .b'),
+    ('sch-hole-multi', ':subject {_ .b _}  .b'),
+    ('sch-hole-nested', ':subject {{.a _} .c}  (%eq .a .c)'),
     # #let
     ('let-single', ':subject .x  #let .d = (%inc .x) in (%eq .d .x)'),
     ('let-pair', ':subject {.x .y}  #let .d = (%inc .x) in (%eq .d .y)'),
@@ -151,6 +165,11 @@ BAD = [
     ('raw-cell-one', '[42]'),
     ('slot-cell-axis', '(%slot [1 2])'),
     ('empty', '   ; nothing here\n'),
+    ('nock-no-payload', '(%nock)'),
+    ('nock-two-payloads', '(%nock 1 2)'),
+    ('nock-expr-payload', '(%nock (%inc (%self)))'),
+    ('nock-axis-payload', '(%nock .a)'),
+    ('nock-cell-one', '(%nock [5])'),
 ]
 
 
@@ -183,8 +202,6 @@ def build_eval_input() -> str:
     bad_lines = [
         f'      [{hoon_cord(name)} {hoon_cord(src)}]' for name, src in BAD
     ]
-    with open(LIB) as f:
-        lib = f.read()
     harness = f"""
 =/  cases=(list [name=@t src=@t want=* wren=@t jat=@ wlif=@t])
   :~
@@ -227,7 +244,7 @@ def build_eval_input() -> str:
   [%nockasm-all-ok (lent cases) (lent bads)]
 [%failures fails]
 """
-    return '=>\n' + lib + '\n' + harness
+    return '=>\n' + hoon_lib_source() + '\n' + harness
 
 
 def main():

@@ -37,6 +37,20 @@ def desk_file(*parts):
     return os.path.join(ROOT, 'desk', *parts)
 
 
+def hoon_lib_source():
+    """The library as ``urbit eval`` can take it: the sur core as an
+    '=>' layer, then the lib body with its ford rune stripped (eval
+    has no ford; on-ship the /- import resolves the same core).
+    Returns text ending in the lib core, ready for composition."""
+    with open(desk_file('sur', 'nockasm.hoon')) as f:
+        sur = f.read()
+    with open(desk_file('lib', 'nockasm.hoon')) as f:
+        lib = f.read()
+    body = '\n'.join(
+        ln for ln in lib.splitlines() if not ln.startswith('/'))
+    return '=>\n' + sur + '\n' + body
+
+
 def run_eval(src, timeout=600):
     """Feed ``src`` to ``urbit eval`` and return combined stdout+stderr."""
     proc = subprocess.run(

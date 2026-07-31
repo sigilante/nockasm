@@ -48,11 +48,24 @@
     !>(`*`[[0 1] [0 2] [0 3] [0 6] [0 7] 0 0])
   !>((expand '[(%self) (%battery) (%payload) (%sample) (%context) (%crash)]'))
 ::
++|  %embeds
+++  test-nock-identity
+  (expect-eq !>(`*`[4 0 1]) !>((expand '(%nock [4 0 1])')))
+++  test-nock-hint-payload
+  %+  expect-eq
+    !>(`*`[11 1.953.718.630 0 1])
+  !>((expand '(%nock [11 \'fast\' 0 1])'))
+++  test-nock-opaque
+  ::  intentionally-partial formulas embed untouched: no validation
+  (expect-eq !>(`*`[6 1 2]) !>((expand '(%nock [6 1 2])')))
+::
 +|  %schemas
 ++  test-schema-flat
   (expect-eq !>(`*`[0 6]) !>((expand ':subject {.a .b .c}  .b')))
 ++  test-schema-nested
   (expect-eq !>(`*`[0 5]) !>((expand ':subject {{.a .b} .c}  .b')))
+++  test-schema-hole
+  (expect-eq !>(`*`[0 6]) !>((expand ':subject {_ .b _}  .b')))
 ::
 +|  %macros
 ++  test-let
@@ -123,6 +136,27 @@
   %+  expect-eq
     !>(`*`(lower:nockasm pr))
   !>(`*`(expand:nockasm (render:nockasm pr)))
+++  test-schema-data
+  ::  a schema constructed directly as data (no text) behaves exactly
+  ::  like its text-parsed equivalent (anonymous position included) --
+  ::  emitters project layout trees into $sema mechanically, never
+  ::  via text
+  =/  sch  `sema:nockasm`[%pair [%leaf 'a'] [%hole ~]]
+  =/  ast  `nasm:nockasm`[%let 'd' [%op 'inc' [%axis 'a'] ~] [%axis 'd']]
+  %+  expect-eq
+    !>(`*`(expand ':subject {.a _} #let .d = (%inc .a) in .d'))
+  !>(`*`(lower:nockasm `sch ast))
+++  test-render-hole
+  =/  pr  (parse:nockasm ':subject {.a _}  .a')
+  (expect-eq !>(':subject {.a _}\0a.a\0a') !>((render:nockasm pr)))
+++  test-lift-nock-fallback
+  ::  the lift is total: a non-macro-izable formula subtree comes
+  ::  back as an opaque %nock embed and still lowers to the input
+  =/  f  `*`[12 34]
+  ?>  =(f (lower:nockasm ~ (lift:nockasm f)))
+  %+  expect-eq
+    !>('(%nock [12 34])\0a')
+  !>((render:nockasm ~ (lift:nockasm f)))
 ::
 +|  %errors
 ++  test-unbound-axis

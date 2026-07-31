@@ -16,9 +16,8 @@ Set URBIT_BIN to point at a vere binary if the default is wrong.
 import re
 import sys
 
-from _testkit import desk_file, run_eval
+from _testkit import desk_file, hoon_lib_source, run_eval
 
-LIB = desk_file('lib', 'nockasm.hoon')
 TESTS = desk_file('tests', 'lib', 'nockasm.hoon')
 
 SHIM = """
@@ -40,8 +39,6 @@ SHIM = """
 
 
 def build_eval_input() -> str:
-    with open(LIB) as f:
-        lib = f.read()
     with open(TESTS) as f:
         tests = f.read()
     arms = re.findall(r'^\+\+  (test-[a-z0-9-]+)', tests, re.M)
@@ -49,7 +46,7 @@ def build_eval_input() -> str:
         raise SystemExit('no test arms found in desk tests file')
     body = '\n'.join(f"      ['{a}' {a}]" for a in arms)
     tests_body = '\n'.join(
-        ln for ln in tests.splitlines() if not ln.startswith('/+'))
+        ln for ln in tests.splitlines() if not ln.startswith('/'))
     tail = f"""
 =/  results=(list [name=@t res=tang])
   :~
@@ -61,7 +58,8 @@ def build_eval_input() -> str:
 ?:  =(~ fails)  %tests-all-ok
 [%failures (turn fails |=([name=@t res=tang] name))]
 """
-    return ('=/  nockasm\n' + lib + SHIM + tests_body + '\n' + tail), arms
+    return ('=/  nockasm\n' + hoon_lib_source()
+            + SHIM + tests_body + '\n' + tail), arms
 
 
 def main():
