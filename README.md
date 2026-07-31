@@ -4,6 +4,8 @@
 
 Nock Assembly is a thin macro over [Nock ISA](https://nock.is) designed to make the language more legible for pedagogical purposes.
 
+**Status ~2026.7.31:  Nockasm is considered *frozen* unless Nock ISA decrements to 3K or a bug is found.**
+
 ## Design
 
 | | |
