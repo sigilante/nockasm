@@ -22,18 +22,22 @@ from nockasm import NASM_VERSION, expand_to_noun, jam, lift, parse, render
 # ----------------------------------------------------------------------
 
 def hoon_cord(s: str) -> str:
-    """Render a Python string as a Hoon cord literal ('...')."""
+    """Render a Python string as a Hoon cord literal ('...').
+
+    Escapes operate on UTF-8 *bytes*, not codepoints — a cord is a
+    byte string, and escaping ord() values would smuggle the exact
+    codepoint-packing bug this suite exists to catch back in through
+    the transport layer."""
     out = []
-    for ch in s:
-        o = ord(ch)
-        if ch == '\\':
+    for b in s.encode('utf-8'):
+        if b == 0x5c:            # backslash
             out.append('\\\\')
-        elif ch == "'":
+        elif b == 0x27:          # quote
             out.append("\\'")
-        elif 32 <= o < 127:
-            out.append(ch)
+        elif 32 <= b < 127:
+            out.append(chr(b))
         else:
-            out.append('\\%02x' % o)   # \0a etc. (hex escape)
+            out.append('\\%02x' % b)   # \0a etc. (hex escape)
     return "'" + ''.join(out) + "'"
 
 
@@ -82,6 +86,8 @@ GOOD = [
     ('hex', '0x2a'),
     ('hex-sep', '0x1.0000'),
     ('cord', "'fast'"),
+    # non-ASCII cords pack as UTF-8 bytes in every implementation
+    ('cord-utf8', "'nöck'"),
     # named opcodes
     ('slot', '(%slot 1)'),
     ('const', '(%const 42)'),
