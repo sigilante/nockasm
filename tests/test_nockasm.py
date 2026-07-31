@@ -35,6 +35,11 @@ section("cord packing")
 check("cord_to_nat('fast')", cord_to_nat('fast'), 0x74736166)
 check("cord_to_nat('')", cord_to_nat(''), 0)
 check("cord_to_nat('a')", cord_to_nat('a'), 97)
+# non-ASCII packs UTF-8 bytes, matching hoon and rust ('é' = c3 a9,
+# not the codepoint 233; 'nöck' = 6e c3 b6 63 6b, little-endian)
+check("cord_to_nat('é') is utf-8 bytes", cord_to_nat('é'), 0xa9c3)
+check("cord_to_nat('nöck')", cord_to_nat('nöck'), 0x6b63b6c36e)
+check("utf-8 cord expands", expand("'nöck'"), str(0x6b63b6c36e))
 
 
 # ----------------------------------------------------------------------

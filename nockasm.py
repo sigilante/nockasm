@@ -76,7 +76,7 @@ Syntax
     1.000     ; decimal with thousands separator (Hoon-style)
     0x2a      ; hex
     0x1.0000  ; hex with separator
-    'cord'    ; little-endian byte-packed natural
+    'cord'    ; little-endian byte-packed natural (UTF-8 bytes)
 
 API
 ===
@@ -182,11 +182,13 @@ def peg(a: int, b: int) -> int:
 
 
 def cord_to_nat(s: str) -> int:
-    """Pack an ASCII string as a little-endian natural."""
-    n = 0
-    for i, ch in enumerate(s):
-        n |= ord(ch) << (8 * i)
-    return n
+    """Pack a string's UTF-8 bytes as a little-endian natural.
+
+    Cords are byte strings: packing operates on UTF-8 bytes, never on
+    codepoints, matching the Hoon library (+crip of a tape) and the
+    Rust crate exactly. (Through 1.3.0 this packed one codepoint per
+    byte position, silently diverging from both on non-ASCII cords.)"""
+    return int.from_bytes(s.encode('utf-8'), 'little')
 
 
 # ----------------------------------------------------------------------
