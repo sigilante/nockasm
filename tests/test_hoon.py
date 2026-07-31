@@ -14,7 +14,7 @@ import sys
 
 # _testkit first: importing it puts the repo root on sys.path (see there).
 from _testkit import ROOT, hoon_lib_source, run_eval
-from nockasm import expand_to_noun, jam, lift, parse, render
+from nockasm import NASM_VERSION, expand_to_noun, jam, lift, parse, render
 
 
 # ----------------------------------------------------------------------
@@ -213,6 +213,10 @@ def build_eval_input() -> str:
   ==
 =/  fails=(list [@t @t])
   ;:  weld
+    ^-  (list [@t @t])
+    ?:  =(nasm-version {NASM_VERSION})  ~
+    ['nasm-version' 'differs-from-python-oracle']~
+  ::
     %+  murn  cases
     |=  [name=@t src=@t want=* wren=@t jat=@ wlif=@t]
     ^-  (unit [@t @t])

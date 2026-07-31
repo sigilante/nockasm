@@ -12,9 +12,12 @@
 ::  its own recursion. $nasm below is the plain self-instantiation;
 ::  an annotated instantiation (a debugger's span-carrying AST, a
 ::  provenance-carrying emitter IR) ties the knot through its own
-::  wrapper instead:
+::  wrapper instead -- under an explicit $~ bunt, or the
+::  nest-checker's bunt derivation recurses forever (%over):
 ::
-::      +$  noted  [=note node=(nasm-of noted)]
+::      +$  noted
+::        $~  [*note [%atom 0]]
+::        [=note node=(nasm-of noted)]
 ::
 ::  and is thereby a first-class citizen of the vocabulary rather
 ::  than a fork of it: every case, including any appended later, is
@@ -89,11 +92,13 @@
       [%hole ~]
   ==
 ::  $opco: the named-opcode vocabulary of %op forms, as a closed
-::  term set for clients matching over opcodes. informative: $nasm
-::  deliberately keeps %op's head wide (p=@t) -- an unknown opcode
-::  is a crash at expansion time (%unknown-opcode), matching the
-::  python oracle, not a parse-time type error. %nock is not here:
-::  it is a vocabulary case of its own, not an %op.
+::  term set. load-bearing: +expa-op refines against $opco and
+::  dispatches exhaustively, so appending a term here without
+::  handling it there is a compile error. $nasm still deliberately
+::  keeps %op's head wide (p=@t) -- parse stays permissive, and an
+::  unknown opcode is a crash at expansion time (%unknown-opcode),
+::  matching the python oracle, not a parse-time type error. %nock
+::  is not here: it is a vocabulary case of its own, not an %op.
 ::
 +$  opco
   $?  %self  %battery  %payload  %sample  %context  %crash

@@ -410,13 +410,18 @@
   ==
 ::  +expa-op: expand one (%opcode ...) application. argument kinds
 ::  follow the python's OPS table: +form for 'f', +expa for 'n',
-::  +ax-arg for 'a'; arity is enforced by the list pattern
+::  +ax-arg for 'a'; arity is enforced by the list pattern. the
+::  opcode set is $opco (sur): membership is refined here, so an
+::  unknown opcode crashes at expansion like the python oracle, and
+::  the ?- dispatch is exhaustive -- appending a term to $opco
+::  without handling it here is a compile error
 ::
 ++  expa-op
   |=  [op=@t as=(list nasm) axes=(map @t @ud)]
   ^-  *
   ~|  [%opcode op %args (lent as)]
-  ?+  op  ~|(%unknown-opcode !!)
+  ?.  ?=(opco op)  ~|(%unknown-opcode !!)
+  ?-  op
     %self     ?>(?=(~ as) [0 1])
     %battery  ?>(?=(~ as) [0 2])
     %payload  ?>(?=(~ as) [0 3])

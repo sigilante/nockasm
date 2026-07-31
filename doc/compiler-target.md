@@ -89,10 +89,13 @@ recursion; plain `$nasm` is its self-instantiation:
 ```
 
 An annotated instantiation ties the knot through its own wrapper —
-`+$  noted  [=note node=(nasm-of noted)]` — so a debugger's
-span-carrying AST or a provenance-carrying emitter IR is a
-first-class citizen of the vocabulary, not a fork of it: every case,
-including any appended later, is inherited by construction.
+`+$  noted  $~([*note [%atom 0]] [=note node=(nasm-of noted)])`, the
+explicit `$~` bunt being load-bearing (without it Hoon's bunt
+derivation recurses forever) — so a debugger's span-carrying AST or
+a provenance-carrying emitter IR is a first-class citizen of the
+vocabulary, not a fork of it: every case, including any appended
+later, is inherited by construction. `desk/tests/lib/nockasm.hoon`
+(`test-vocabulary-instantiation`) pins the pattern.
 
 **`%nock` — the opaque formula embed.** `[%nock p=*]` holds an
 already-formed Nock formula as a raw noun. Its purpose is boundary

@@ -146,9 +146,55 @@
   %+  expect-eq
     !>(`*`(expand ':subject {.a _} #let .d = (%inc .a) in .d'))
   !>(`*`(lower:nockasm `sch ast))
+++  test-schema-data-match
+  ::  same law through #match, with a nested anonymous position
+  =/  sch  `sema:nockasm`[%pair [%pair [%leaf 'a'] [%hole ~]] [%leaf 'c']]
+  =/  ast
+    ^-  nasm:nockasm
+    [%match [%axis 'c'] ~[[[%atom 1] [%axis 'a']]] [%atom 0]]
+  %+  expect-eq
+    !>(`*`(expand ':subject {{.a _} .c} #match .c { 1 => .a  _ => 0 }'))
+  !>(`*`(lower:nockasm `sch ast))
 ++  test-render-hole
   =/  pr  (parse:nockasm ':subject {.a _}  .a')
   (expect-eq !>(':subject {.a _}\0a.a\0a') !>((render:nockasm pr)))
+++  test-vocabulary-instantiation
+  ::  an annotated instantiation of +nasm-of is a first-class citizen
+  ::  of the vocabulary: a foreign knot ties through its own wrapper,
+  ::  inherits every case, and projects back to plain $nasm
+  ::  the wrapper ties the knot under an explicit $~ bunt -- without
+  ::  it the nest-checker's bunt derivation recurses forever (%over)
+  =>  |%
+      +$  span   [l=@ud c=@ud]
+      +$  noted
+        $~  [[0 0] [%atom 0]]
+        [s=span n=(nasm-of:nockasm noted)]
+      ++  strip
+        |=  a=noted
+        ^-  nasm:nockasm
+        ?-  -.n.a
+          %atom   n.a
+          %axis   n.a
+          %nock   n.a
+          %cell   [%cell (turn p.n.a strip)]
+          %op     [%op p.n.a (turn q.n.a strip)]
+          %let    [%let p.n.a $(a q.n.a) $(a r.n.a)]
+          %match  :*  %match
+                      $(a p.n.a)
+                      (turn q.n.a |=([p=noted q=noted] [(strip p) (strip q)]))
+                      $(a r.n.a)
+                  ==
+        ==
+      --
+  =/  ex=noted
+    :-  [1 1]
+    :*  %let  'd'
+        [[1 10] %op 'inc' ~[`noted`[[1 15] %axis 'x']]]
+        [[2 1] %nock [0 2]]
+    ==
+  %+  expect-eq
+    !>(`*`(expand ':subject .x  #let .d = (%inc .x) in (%nock [0 2])'))
+  !>(`*`(lower:nockasm `[%leaf 'x'] (strip ex)))
 ++  test-lift-nock-fallback
   ::  the lift is total: a non-macro-izable formula subtree comes
   ::  back as an opaque %nock embed and still lowers to the input
