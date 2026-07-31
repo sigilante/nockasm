@@ -14,12 +14,17 @@ Syntax
 
     :subject SCHEMA
     SCHEMA  := LEAF | "{" LEAF+ "}"
-    LEAF    := ".name" | SCHEMA
+    LEAF    := ".name" | "_" | SCHEMA
 
   ; flat schema lists are right-leaning by Hoon convention:
   ;   {.a .b}        -> .a=2, .b=3
   ;   {.a .b .c}     -> .a=2, .b=6, .c=7
   ;   {{.a .b} .c}   -> .a=4, .b=5, .c=3
+
+  ; "_" is an anonymous position: subject structure with no name
+  ; bound (machine-generated schemas mirror subject shape and leave
+  ; unnamed axes as holes). Schemas carry names, structure, and axes
+  ; only — never type information.
 
   ; named opcodes (the only macro that's just lexing):
     (%slot N)       -> [0 N]
@@ -42,6 +47,13 @@ Syntax
     (%edit N V F)   -> [10 [N V] F]
     (%hint T F)     -> [11 T F]            ; static hint
     (%hintd T C F)  -> [11 [T C] F]        ; dynamic hint
+
+  ; opaque formula embed — boundary embedding for foreign-produced
+  ; formulas (FFI glue, precompiled fragments); not a general escape
+  ; hatch. F is a noun literal (atoms and [...] cells only, never an
+  ; expression); expansion is identity and the payload is never
+  ; recursed into, validated, or rewritten:
+    (%nock F)       -> F
 
   ; structural macros:
     #let .name = EXPR in EXPR
@@ -98,10 +110,11 @@ Target IR (see doc/compiler-target.md)
       The Hoon implementation renders byte-identically.
 
   lift(noun) -> ast
-      Read a noun as a formula: the deterministic, zero-heuristic
-      lift. Named ops by Nock's positional grammar; structural raw
-      cells wherever the shape is not a valid formula; no intent
-      claims. Soundness: lower(None, lift(f)) == f for every noun.
+      Read a noun as a formula: the deterministic, zero-heuristic,
+      total lift. Named ops by Nock's positional grammar; opaque
+      (%nock ...) embeds wherever a formula-position subtree cannot
+      be macro-ized; no intent claims. Soundness:
+      lower(None, lift(f)) == f for every noun.
 
   jam(noun) -> int / cue(int) -> noun
       Urbit noun serialization; a .jam file is the jammed atom's
@@ -124,11 +137,15 @@ import re
 import sys
 from typing import Union, Tuple, Dict, List, Optional, Any
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # Version of the target-IR contract: the $nasm node set, the lowering
 # equations, and the canonical rendering rules. Append-only.
-NASM_VERSION = 1
+# v2: the %nock opaque-embed node, `_` anonymous schema positions,
+# and the lift fallback moving from structural raw cells to %nock
+# (pure vocabulary extension: every v1 IR value lowers and renders
+# exactly as before).
+NASM_VERSION = 2
 
 
 # ----------------------------------------------------------------------
@@ -284,7 +301,20 @@ class MatchForm(Node):
         return f"MatchForm({self.scrutinee}, {self.cases}, {self.default})"
 
 
-# Schema is represented as either a string (".name") or a 2-tuple
+class NockEmbed(Node):
+    """(%nock F): an already-formed Nock formula embedded as a raw
+    noun. Boundary embedding for foreign-produced formulas (FFI glue,
+    precompiled fragments) — not a general escape hatch. Expansion is
+    identity: the expander never recurses into, validates, or
+    rewrites the payload; well-formedness is the producer's
+    responsibility, and tooling treats the payload as opaque."""
+    def __init__(self, noun): self.noun = noun
+    def __repr__(self): return f"NockEmbed({self.noun!r})"
+
+
+# Schema is represented as a string (".name"), the anonymous-position
+# marker "_" (structure with no name bound; distinguishable from
+# names, which always start with '.'), or a 2-tuple
 # (head_schema, tail_schema).
 
 
@@ -341,6 +371,9 @@ class Parser:
         if t.kind == 'AXIS':
             self._advance()
             return t.value
+        if t.kind == 'UNDER':
+            self._advance()
+            return '_'
         if t.kind == 'LCURLY':
             self._advance()
             leaves = []
@@ -409,7 +442,7 @@ class Parser:
             raise SyntaxError("raw cell needs >=2 elements")
         return RawCell(elems)
 
-    def _parse_op_app(self) -> OpApp:
+    def _parse_op_app(self) -> Node:
         self._expect('LPAREN')
         t = self._peek()
         if t is None or t.kind != 'OPCODE':
@@ -417,6 +450,10 @@ class Parser:
                 f"expected %opcode after '(', got {t!r}"
             )
         op = self._advance().value
+        if op == '%nock':
+            payload = self._parse_noun_literal()
+            self._expect('RPAREN')
+            return NockEmbed(payload)
         args = []
         while True:
             t = self._peek()
@@ -427,6 +464,44 @@ class Parser:
                 break
             args.append(self._parse_expr())
         return OpApp(op, args)
+
+    def _parse_noun_literal(self) -> Noun:
+        """The (%nock ...) payload: atom literals and [...] cells of
+        noun literals only — never an expression. The payload is data
+        to the assembler; nothing in it expands."""
+        t = self._peek()
+        if t is None:
+            raise SyntaxError("(%nock ...) payload: expected noun "
+                              "literal, got EOF")
+        if t.kind == 'DEC':
+            self._advance()
+            return int(t.value.replace('_', '').replace('.', ''))
+        if t.kind == 'HEX':
+            self._advance()
+            return int(t.value[2:].replace('.', '').replace('_', ''), 16)
+        if t.kind == 'CORD':
+            self._advance()
+            return cord_to_nat(t.value[1:-1])
+        if t.kind == 'LBRACK':
+            self._advance()
+            elems = []
+            while True:
+                t2 = self._peek()
+                if t2 is None:
+                    raise SyntaxError(
+                        "unterminated [ in (%nock ...) payload")
+                if t2.kind == 'RBRACK':
+                    self._advance()
+                    break
+                elems.append(self._parse_noun_literal())
+            if len(elems) < 2:
+                raise SyntaxError(
+                    "(%nock ...) payload cell needs >=2 elements")
+            return cell(*elems)
+        raise SyntaxError(
+            f"(%nock ...) payload must be a noun literal, got "
+            f"{t.kind} {t.value!r} at L{t.line}:C{t.col}"
+        )
 
     def _parse_macro(self) -> Node:
         m = self._advance()
@@ -512,6 +587,8 @@ class Expander:
         return self._expand(expr, axes)
 
     def _resolve_schema(self, schema, base_axis: int) -> Dict[str, int]:
+        if schema == '_':
+            return {}          # anonymous position: no name bound
         if isinstance(schema, str):
             return {schema: base_axis}
         head, tail = schema
@@ -553,6 +630,9 @@ class Expander:
             return cell(0, axes[e.name])
         if isinstance(e, RawCell):
             return cell(*[self._expand(x, axes) for x in e.elems])
+        if isinstance(e, NockEmbed):
+            # identity — the payload is opaque (see the class doc)
+            return e.noun
         if isinstance(e, OpApp):
             spec = self.OPS.get(e.op)
             if spec is None:
@@ -721,11 +801,15 @@ def cue(a: int) -> Noun:
 #
 # The deterministic, zero-heuristic lift (doc/compiler-target.md).
 # The caller asserts the noun is a formula; positions follow Nock's
-# grammar. Where a shape does not match a valid formula (an atom in a
-# formula position, an opcode head above 11), the node falls back to
-# a structural raw cell -- always sound, never sugared. No intent is
-# ever claimed: constants are %const (never %arm), axes are %slot
-# (never the core aliases), and no macro skeleton is recognized.
+# grammar. Where a formula-position shape cannot be macro-ized (an
+# atom in a formula position, an opcode head above 11, a malformed
+# tail), the node falls back to an opaque (%nock ...) embed -- always
+# sound, never sugared, and the lift is total. Data positions
+# (opcode-1 payloads, dynamic hint tags) stay structural raw cells:
+# they are nouns, not formulas, so %nock would be a false claim. No
+# intent is ever claimed: constants are %const (never %arm), axes are
+# %slot (never the core aliases), and no macro skeleton is
+# recognized.
 #
 # Soundness law: lower(None, lift(f)) == f for every noun f.
 # ----------------------------------------------------------------------
@@ -751,7 +835,7 @@ def _cell(x) -> bool:
 def lift(n: Noun) -> Node:
     """Read a noun as a formula; see the soundness law above."""
     if isinstance(n, int):
-        return IntAtom(n)
+        return NockEmbed(n)    # an atom is never a formula
     h, t = n
     if _cell(h):
         # cons-formula: both halves are formula positions
@@ -799,7 +883,7 @@ def lift(n: Noun) -> Node:
                 and _cell(t[1])):
             return OpApp('%hintd', [_noun_ast(t[0][0]), lift(t[0][1]),
                                     lift(t[1])])
-    return _noun_ast(n)
+    return NockEmbed(n)
 
 
 def nasm_from_jam(data: bytes) -> str:
@@ -877,6 +961,9 @@ def _wide(e: Node):
         if any(p is None for p in parts):
             return None
         return '(' + e.op + ' ' + ' '.join(parts) + ')'
+    if isinstance(e, NockEmbed):
+        # noun-literal payloads always have a wide form
+        return '(%nock ' + _wide(_noun_ast(e.noun)) + ')'
     return None
 
 
@@ -924,6 +1011,13 @@ def _rend(e: Node, ind: int, res: int):
         for a in e.args[:-1]:
             out += _rend(a, ind + 2, 0)
         out += _rend(e.args[-1], ind + 2, res + 1)
+        out[-1] += ')'
+        return out
+    if isinstance(e, NockEmbed):
+        # tall form mirrors a one-argument op; the payload renders as
+        # its structural reading
+        out = [pad + '(%nock']
+        out += _rend(_noun_ast(e.noun), ind + 2, res + 1)
         out[-1] += ')'
         return out
     if isinstance(e, LetForm):

@@ -2,7 +2,9 @@
 
 # _testkit first: importing it puts the repo root on sys.path (see there).
 from _testkit import Tally
-from nockasm import expand, peg, cord_to_nat
+from nockasm import (AxisRef, IntAtom, LetForm, MatchForm, OpApp,
+                     cord_to_nat, expand, expand_to_noun, lift, lower,
+                     parse, peg, render)
 from test_hoon import BAD
 
 _t = Tally()
@@ -195,6 +197,74 @@ check("worked example",
 
 
 # ----------------------------------------------------------------------
+section("%nock embeds")
+# ----------------------------------------------------------------------
+
+# identity: (%nock F) expands to exactly F — no recursion, no
+# validation, no rewriting. Hint-laden and intentionally-partial
+# payloads must survive untouched.
+check("nock atom",      expand("(%nock 42)"),               "42")
+check("nock cell",      expand("(%nock [4 0 1])"),          "[4 0 1]")
+check("nock hint formula",
+      expand("(%nock [11 'fast' 0 1])"),
+      f"[11 {0x74736166} 0 1]")
+check("nock partial formula (not validated)",
+      expand("(%nock [6 1 2])"),
+      "[6 1 2]")
+check("nock deep",      expand("(%nock [8 [1 0] 4 0 6])"),  "[8 [1 0] 4 0 6]")
+# in an argument position the enclosing op's kind applies to the
+# result, as for any expression: a cell passes through, an atom lifts
+check("nock in formula position",
+      expand("(%comp (%nock [0 1]) (%inc (%self)))"),
+      "[7 [0 1] 4 0 1]")
+check("nock atom lifts in formula position",
+      expand("(%inc (%nock 55))"),
+      "[4 1 55]")
+
+# text round-trip through render/parse
+for _src in ["(%nock 42)", "(%nock [4 0 1])", "(%nock [11 'fast' 0 1])"]:
+    _s, _a = parse(_src)
+    check(f"nock round-trip {_src}",
+          expand_to_noun(render(_s, _a)), lower(_s, _a))
+
+# lifter fallback: non-macro-izable formula subtrees come back as
+# %nock, and the result still lowers to the input (totality)
+check("lift fallback render", render(None, lift((12, 34))),
+      "(%nock [12 34])\n")
+check("lift fallback atom", render(None, lift(42)), "(%nock 42)\n")
+check("lift fallback lowers", lower(None, lift((2, (5, 6)))), (2, (5, 6)))
+
+
+# ----------------------------------------------------------------------
+section("anonymous schema positions")
+# ----------------------------------------------------------------------
+
+# '_' is structure with no name bound; generated schemas depend on it
+check("hole tail",   expand(":subject {.a _}  .a"),      "[0 2]")
+check("hole head",   expand(":subject {_ .b}  .b"),      "[0 3]")
+check("hole multi",  expand(":subject {_ .b _}  .b"),    "[0 6]")
+check("hole nested", expand(":subject {{.a _} .c}  (%eq .a .c)"),
+      "[5 [0 4] 0 3]")
+
+# a schema constructed directly as data (no text) must behave exactly
+# like its text-parsed equivalent — downstream compilers construct
+# schema values mechanically from a layout tree, never via text
+_sch = ('.a', '_')
+_ast = LetForm('.d', OpApp('%inc', [AxisRef('.a')]), AxisRef('.d'))
+check("data-constructed schema (let)",
+      lower(_sch, _ast),
+      expand_to_noun(":subject {.a _} #let .d = (%inc .a) in .d"))
+_msch = (('.a', '_'), '.c')
+_mast = MatchForm(AxisRef('.c'), [(IntAtom(1), AxisRef('.a'))], IntAtom(0))
+check("data-constructed schema (match, hole)",
+      lower(_msch, _mast),
+      expand_to_noun(
+          ":subject {{.a _} .c} #match .c { 1 => .a  _ => 0 }"))
+check("hole renders as _", render(('.a', '_'), AxisRef('.a')),
+      ":subject {.a _}\n.a\n")
+
+
+# ----------------------------------------------------------------------
 section("errors")
 # ----------------------------------------------------------------------
 
@@ -215,6 +285,11 @@ EXPECTED = {
     'dup-schema':       SyntaxError,
     'raw-cell-one':     SyntaxError,
     'empty':            SyntaxError,
+    'nock-no-payload':  SyntaxError,
+    'nock-two-payloads': SyntaxError,
+    'nock-expr-payload': SyntaxError,
+    'nock-axis-payload': SyntaxError,
+    'nock-cell-one':    SyntaxError,
 }
 for _name, _src in BAD:
     _t.raises(_name, lambda s=_src: expand(s), EXPECTED.get(_name, Exception))

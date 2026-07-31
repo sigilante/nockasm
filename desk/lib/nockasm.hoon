@@ -5,6 +5,11 @@
 ::    the python's test suite is the conformance oracle, and beneath
 ::    both, the Nock 4K specification is the truth.
 ::
+::    the shared types ($nasm, $mcas, $sema, the +nasm-of vocabulary,
+::    +nasm-version) live in /sur/nockasm; this library is the
+::    reference implementation over them. downstream toolchains that
+::    only construct or inspect IR vendor the sur alone.
+::
 ::    usage:
 ::      > =nasm -build-file %/lib/nockasm/hoon
 ::      > (expand:nasm '(%inc (%self))')
@@ -31,7 +36,8 @@
 ::      ; comments to end-of-line
 ::
 ::      ; optional axis schema for the subject (right-leaning by hoon
-::      ; convention: {.a .b .c} -> .a=2, .b=6, .c=7; nesting allowed):
+::      ; convention: {.a .b .c} -> .a=2, .b=6, .c=7; nesting allowed;
+::      ; _ is an anonymous position: structure with no name bound):
 ::        :subject {.tag .data}
 ::
 ::      ; named opcodes:
@@ -55,6 +61,13 @@
 ::        (%edit N V F)   -> [10 [N V] F]
 ::        (%hint T F)     -> [11 T F]      ; static hint
 ::        (%hintd T C F)  -> [11 [T C] F]  ; dynamic hint
+::
+::      ; opaque formula embed -- boundary embedding for foreign-
+::      ; produced formulas (FFI glue, precompiled fragments); not a
+::      ; general escape hatch. F is a noun literal (atoms and [...]
+::      ; cells only, never an expression); expansion is identity and
+::      ; the payload is never recursed into, validated, or rewritten:
+::        (%nock F)       -> F
 ::
 ::      ; structural macros:
 ::        #let .name = EXPR in EXPR
@@ -80,43 +93,12 @@
 ::    %duplicate-schema-name, and friends. parse errors crash from
 ::    +scan with {line column}.
 ::
+/-  *nockasm
 |%
 +|  %types
-::
-::  $nasm: parsed nockasm expression
-::
-::    %atom   integer, hex, or cord literal (value already packed)
-::    %axis   .name reference into the subject schema
-::    %cell   raw [a b c] cell; elements expanded structurally
-::    %op     (%opcode args) application
-::    %let    #let p = q in r
-::    %match  #match p { q... _ => r }
-::
-+$  nasm
-  $~  [%atom 0]
-  $%  [%atom p=@]
-      [%axis p=@t]
-      [%cell p=(list nasm)]
-      [%op p=@t q=(list nasm)]
-      [%let p=@t q=nasm r=nasm]
-      [%match p=nasm q=(list mcas) r=nasm]
-  ==
-::  $mcas: one #match case: pattern and body
-::
-::    a named type rather than an inline pair: (list [p=nasm q=nasm])
-::    inside the recursive $% sends the nest-checker into a stack
-::    overflow (%over); routing the recursion through a named hold
-::    keeps it finite.
-::
-+$  mcas  [p=nasm q=nasm]
-::  $sema: subject axis schema, as parsed from :subject
-::
-+$  sema
-  $~  [%leaf '']
-  $%  [%leaf p=@t]
-      [%pair p=sema q=sema]
-  ==
-::  $marm: one parsed #match arm: a case or the _ default
+::  $marm: one parsed #match arm: a case or the _ default.
+::  parser-internal (raw parse before +make-match splits cases from
+::  the default) -- not spec surface, so it stays out of the sur.
 ::
 +$  marm
   $~  [%def [%atom 0]]
@@ -188,6 +170,7 @@
     (stag %atom qut-lit)
     (stag %axis ;~(pfix dot nym))
     raw-cel
+    nock-emb
     op-app
     mac-let
     mac-match
@@ -207,6 +190,39 @@
   %+  cook  |=([op=@t as=(list nasm)] `nasm`[%op op as])
   %+  ifix  [pal (tkn par)]
   ;~(plug (tkn ;~(pfix cen nym)) (star (tkn expr)))
+::  +nock-emb: (%nock N) -- opaque formula embed. N is a noun
+::  literal, parsed by +nl-noun and stored as a raw noun; an
+::  expression payload fails this rule (and, through +op-app,
+::  crashes as %unknown-opcode, since %nock is not an %op)
+::
+++  nock-emb
+  %+  cook  |=(n=* `nasm`[%nock n])
+  %+  ifix  [pal (tkn par)]
+  ;~(pfix (tkn kwd-nock) (tkn nl-noun))
+::  +kwd-nock: the token '%nock', not a prefix of a longer opcode
+::
+++  kwd-nock
+  ;~(sfix (jest '%nock') ;~(less ;~(pose aln cab hep) (easy ~)))
+::  +nl-noun: a noun literal: an atom literal or a [...] cell of
+::  noun literals -- never an axis, op, or macro
+::
+++  nl-noun
+  %+  knee  **
+  |.  ~+
+  ;~  pose
+    hex-lit
+    dem-lit
+    qut-lit
+    %+  cook
+      |=  l=(list *)
+      ?.  (gte (lent l) 2)
+        ~|(%nock-payload-needs-two-elements !!)
+      |-  ^-  *
+      ?~  l  !!
+      ?~  t.l  i.l
+      [i.l $(l t.l)]
+    (ifix [sel (tkn ser)] (plus (tkn nl-noun)))
+  ==
 ::  +mac-let: #let .name = EXPR in EXPR
 ::
 ++  mac-let
@@ -251,14 +267,16 @@
            $(items t.items, def `p.i.items)
     %case  $(items t.items, cases [[p.i.items q.i.items] cases])
   ==
-::  +sch-rule: :subject schema — .name leaf or {schema+} group;
-::  flat groups cons right-leaning per hoon convention
+::  +sch-rule: :subject schema — .name leaf, _ anonymous position,
+::  or {schema+} group; flat groups cons right-leaning per hoon
+::  convention
 ::
 ++  sch-rule
   %+  knee  *sema
   |.  ~+
   ;~  pose
     (stag %leaf ;~(pfix dot nym))
+    (cold `sema`[%hole ~] cab)
     %+  cook
       |=  l=(lest sema)
       |-  ^-  sema
@@ -294,13 +312,16 @@
   =/  axes=(map @t @ud)
     ?~(sch ~ (sch-axes u.sch 1))
   (expa ast axes)
-::  +sch-axes: resolve a schema to name->axis, rooted at base
+::  +sch-axes: resolve a schema to name->axis, rooted at base.
+::  duplicate names crash: uniqueness is the producer's obligation
+::  (see /sur/nockasm); holes bind nothing and repeat freely
 ::
 ++  sch-axes
   |=  [s=sema base=@ud]
   ^-  (map @t @ud)
   ?-  -.s
     %leaf  (my [p.s base]~)
+    %hole  ~
     %pair
       =/  hed  $(s p.s, base (mul 2 base))
       =/  tal  $(s q.s, base +((mul 2 base)))
@@ -356,6 +377,11 @@
   ::
     %op  (expa-op p.ast q.ast axes)
   ::
+    ::  identity: the payload is opaque (see /sur/nockasm) -- never
+    ::  recursed into, validated, or rewritten
+    ::
+    %nock  p.ast
+  ::
     %let
       ::  value compiled against the old subject; body sees the
       ::  binding at axis 2 and everything else pegged under 3
@@ -384,13 +410,18 @@
   ==
 ::  +expa-op: expand one (%opcode ...) application. argument kinds
 ::  follow the python's OPS table: +form for 'f', +expa for 'n',
-::  +ax-arg for 'a'; arity is enforced by the list pattern
+::  +ax-arg for 'a'; arity is enforced by the list pattern. the
+::  opcode set is $opco (sur): membership is refined here, so an
+::  unknown opcode crashes at expansion like the python oracle, and
+::  the ?- dispatch is exhaustive -- appending a term to $opco
+::  without handling it here is a compile error
 ::
 ++  expa-op
   |=  [op=@t as=(list nasm) axes=(map @t @ud)]
   ^-  *
   ~|  [%opcode op %args (lent as)]
-  ?+  op  ~|(%unknown-opcode !!)
+  ?.  ?=(opco op)  ~|(%unknown-opcode !!)
+  ?-  op
     %self     ?>(?=(~ as) [0 1])
     %battery  ?>(?=(~ as) [0 2])
     %payload  ?>(?=(~ as) [0 3])
@@ -430,10 +461,6 @@
 ::    the reserve (characters an enclosing form will append to the
 ::    final line), with a 76-column limit.
 ::
-::  +nasm-version: version of the IR node set, lowering equations,
-::  and canonical rendering rules. append-only.
-::
-++  nasm-version  1
 ::  +lower: IR -> canonical nock formula
 ::
 ++  lower
@@ -457,46 +484,50 @@
   |=  a=@
   ^-  @t
   (render ~ (lift (cue a)))
-::  +lift: read a noun as a formula: the deterministic, zero-heuristic
-::  lift. named ops by nock's positional grammar; structural raw cells
-::  wherever the shape is not a valid formula; no intent claims
-::  (constants are %const, never %arm; axes are %slot, never the core
-::  aliases; no macro skeleton is recognized). byte-identical to the
-::  python lift through +render.
+::  +lift: read a noun as a formula: the deterministic, zero-heuristic,
+::  total lift. named ops by nock's positional grammar; opaque %nock
+::  embeds wherever a formula-position subtree cannot be macro-ized
+::  (an atom in formula position, an opcode head above 11, a malformed
+::  tail); no intent claims (constants are %const, never %arm; axes
+::  are %slot, never the core aliases; no macro skeleton is
+::  recognized). data positions (opcode-1 payloads, dynamic hint tags)
+::  stay structural raw cells: they are nouns, not formulas, so %nock
+::  would be a false claim. byte-identical to the python lift through
+::  +render.
 ::
 ::  soundness law:  (lower ~ (lift f))  ===  f  for every noun f
 ::
 ++  lift
   |=  n=*
   ^-  nasm
-  ?@  n  [%atom n]
+  ?@  n  [%nock n]
   ?^  -.n
     ::  cons-formula: both halves are formula positions
     [%cell [$(n -.n) $(n +.n) ~]]
-  ?+  -.n  (noun-ast n)
-    %0   ?^(+.n (noun-ast n) [%op 'slot' [%atom +.n] ~])
+  ?+  -.n  [%nock n]
+    %0   ?^(+.n [%nock n] [%op 'slot' [%atom +.n] ~])
     %1   [%op 'const' (noun-ast +.n) ~]
-    %2   ?.  ?=([^ ^] +.n)  (noun-ast n)
+    %2   ?.  ?=([^ ^] +.n)  [%nock n]
          [%op 'eval' $(n +<.n) $(n +>.n) ~]
-    %3   ?.  ?=(^ +.n)  (noun-ast n)
+    %3   ?.  ?=(^ +.n)  [%nock n]
          [%op 'isa' $(n +.n) ~]
-    %4   ?.  ?=(^ +.n)  (noun-ast n)
+    %4   ?.  ?=(^ +.n)  [%nock n]
          [%op 'inc' $(n +.n) ~]
-    %5   ?.  ?=([^ ^] +.n)  (noun-ast n)
+    %5   ?.  ?=([^ ^] +.n)  [%nock n]
          [%op 'eq' $(n +<.n) $(n +>.n) ~]
-    %6   ?.  ?=([^ ^ ^] +.n)  (noun-ast n)
+    %6   ?.  ?=([^ ^ ^] +.n)  [%nock n]
          [%op 'if' $(n +<.n) $(n +>-.n) $(n +>+.n) ~]
-    %7   ?.  ?=([^ ^] +.n)  (noun-ast n)
+    %7   ?.  ?=([^ ^] +.n)  [%nock n]
          [%op 'comp' $(n +<.n) $(n +>.n) ~]
-    %8   ?.  ?=([^ ^] +.n)  (noun-ast n)
+    %8   ?.  ?=([^ ^] +.n)  [%nock n]
          [%op 'push' $(n +<.n) $(n +>.n) ~]
-    %9   ?.  ?=([@ ^] +.n)  (noun-ast n)
+    %9   ?.  ?=([@ ^] +.n)  [%nock n]
          [%op 'call' [%atom +<.n] $(n +>.n) ~]
-    %10  ?.  ?=([[@ ^] ^] +.n)  (noun-ast n)
+    %10  ?.  ?=([[@ ^] ^] +.n)  [%nock n]
          [%op 'edit' [%atom +<-.n] $(n +<+.n) $(n +>.n) ~]
     %11  ?:  ?=([@ ^] +.n)
            [%op 'hint' [%atom +<.n] $(n +>.n) ~]
-         ?.  ?=([[* ^] ^] +.n)  (noun-ast n)
+         ?.  ?=([[* ^] ^] +.n)  [%nock n]
          [%op 'hintd' (noun-ast +<-.n) $(n +<+.n) $(n +>.n) ~]
   ==
 ::  +noun-ast: a noun as pure structure: atoms and right-spine-
@@ -520,6 +551,8 @@
   ^-  tape
   ?:  ?=(%leaf -.s)
     ['.' (trip p.s)]
+  ?:  ?=(%hole -.s)
+    "_"
   =/  elems
     =/  cur=sema  s
     =|  acc=(list sema)
@@ -575,6 +608,10 @@
       ?~  q.e  `:(weld "(%" (trip p.e) ")")
       ?~  ws=(wide-all q.e)  ~
       `:(weld "(%" (trip p.e) " " (join-tapes " " u.ws) ")")
+    ::  noun-literal payloads always have a wide form
+    %nock
+      ?~  w=(wide (noun-ast p.e))  ~
+      `:(weld "(%nock " u.w ")")
     %let    ~
     %match  ~
   ==
@@ -626,6 +663,15 @@
         ?~  args  ~
         ?~  t.args  (rend i.args (add ind 2) +(res))
         (weld (rend i.args (add ind 2) 0) $(args t.args))
+      ")"
+  ::
+    ::  tall form mirrors a one-argument op; the payload renders as
+    ::  its structural reading
+    ::
+    %nock
+      %+  amend-last
+        %+  weld  [(weld pad "(%nock") ~]
+        (rend (noun-ast p.e) (add ind 2) +(res))
       ")"
   ::
     %let
