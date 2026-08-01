@@ -90,7 +90,7 @@ API
       Returns the Python nested-tuple noun directly, for in-process use
       (e.g., feeding pinochle without an intermediate string round-trip).
 
-Target IR (see doc/compiler-target.md)
+Target IR (see the compiler-target spec: sigilante/jock docs/spec/nockasm-target.md)
 ======================================
 
   The parsed AST doubles as a compiler target IR, versioned by
@@ -801,7 +801,7 @@ def cue(a: int) -> Noun:
 # ----------------------------------------------------------------------
 # Lift: Nock noun -> IR
 #
-# The deterministic, zero-heuristic lift (doc/compiler-target.md).
+# The deterministic, zero-heuristic lift (compiler-target spec, sigilante/jock).
 # The caller asserts the noun is a formula; positions follow Nock's
 # grammar. Where a formula-position shape cannot be macro-ized (an
 # atom in a formula position, an opcode head above 11, a malformed
@@ -897,7 +897,8 @@ def nasm_from_jam(data: bytes) -> str:
 # Renderer: IR -> canonical .nasm text
 #
 # The rules here are the normative "canonical rendering v1" of
-# doc/compiler-target.md and must match desk/lib/nockasm.hoon
+# the compiler-target spec (sigilante/jock docs/spec/nockasm-target.md)
+# and must match desk/lib/nockasm.hoon
 # byte-for-byte. Every layout decision is a pure function of the IR
 # value and the current indent; nothing remembers source spelling.
 # ----------------------------------------------------------------------
