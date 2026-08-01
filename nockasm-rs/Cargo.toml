@@ -1,0 +1,35 @@
+[package]
+name = "nockasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Chris Allen <cma@bitemyapp.com>"]
+description = "Pure Rust implementation of Nockasm: legible Nock assembly to canonical Nock 4K formulas"
+license = "MIT"
+repository = "https://github.com/bitemyapp/nockasm"
+keywords = ["nock", "urbit", "nockchain", "assembler", "compiler"]
+categories = ["compilers", "parser-implementations"]
+
+# Zero runtime dependencies, by design: the crate is meant to be a small,
+# auditable executor of the nockasm laws (see src/lib.rs). The test suite
+# is likewise dependency-free (hand-rolled PRNG for the property tests).
+[dependencies]
+
+[dev-dependencies]
+
+[features]
+# Share nouns across threads: swaps the internal Rc for Arc, making
+# Atom/Noun (and everything built from them) Send + Sync. Additive:
+# enabling it only adds capabilities, at the cost of atomic refcounts.
+sync = []
+
+[[bin]]
+name = "nockasm"
+path = "src/main.rs"
+
+[[bench]]
+name = "pipeline"
+harness = false
+
+[profile.release]
+opt-level = 3

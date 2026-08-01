@@ -4,5 +4,6 @@ dist/
 build/
 *.egg-info/
 nasmc/target/
+nockasm-rs/target/
 .data.nasmc/
 out.jam
