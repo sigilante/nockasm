@@ -125,7 +125,7 @@ target IR — `parse` / `lower` / `render`, with `render` byte-identical
 across the two and governed by the round-trip law
 `expand(render(x)) == lower(x)` — plus `jam` / `cue` / `lift` /
 `nasm-from-jam` for reading jammed formulas back to source under the
-soundness law `lower(lift(f)) == f`. See `doc/compiler-target.md`.
+soundness law `lower(lift(f)) == f`. See the compiler-target spec, maintained in the Jock repository: [sigilante/jock `docs/spec/nockasm-target.md`](https://github.com/sigilante/jock/blob/master/docs/spec/nockasm-target.md).
 
 ## Use in a NockApp
 
