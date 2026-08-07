@@ -43,6 +43,10 @@
   %+  expect-eq
     !>(`*`[11 [1.953.718.630 1 0] 0 1])
   !>((expand '(%hintd \'fast\' 0 (%slot 1))'))
+++  test-scry
+  %+  expect-eq
+    !>(`*`[12 [1 138] 0 1])
+  !>((expand '(%scry (%const 138) (%slot 1))'))
 ++  test-axis-aliases
   %+  expect-eq
     !>(`*`[[0 1] [0 2] [0 3] [0 6] [0 7] 0 0])
@@ -198,10 +202,10 @@
 ++  test-lift-nock-fallback
   ::  the lift is total: a non-macro-izable formula subtree comes
   ::  back as an opaque %nock embed and still lowers to the input
-  =/  f  `*`[12 34]
+  =/  f  `*`[13 34]
   ?>  =(f (lower:nockasm ~ (lift:nockasm f)))
   %+  expect-eq
-    !>('(%nock [12 34])\0a')
+    !>('(%nock [13 34])\0a')
   !>((render:nockasm ~ (lift:nockasm f)))
 ::
 +|  %errors

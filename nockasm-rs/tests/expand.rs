@@ -63,6 +63,8 @@ fn named_opcodes() {
         flat("(%hintd 'fast' 0 (%slot 1))"),
         "[11 [1953718630 1 0] 0 1]"
     );
+    assert_eq!(flat("(%scry (%const 138) (%slot 1))"), "[12 [1 138] 0 1]");
+    assert_eq!(flat("(%scry 138 0)"), "[12 [1 138] 1 0]");
     assert_eq!(
         flat("[(%self) (%battery) (%payload) (%sample) (%context) (%crash)]"),
         "[[0 1] [0 2] [0 3] [0 6] [0 7] 0 0]"
@@ -233,6 +235,16 @@ fn errors() {
                 op: "inc",
                 want: 1,
                 got: 2
+            }
+        )
+    });
+    parse_err("(%scry 1)", |k| {
+        matches!(
+            k,
+            K::OpArity {
+                op: "scry",
+                want: 2,
+                got: 1
             }
         )
     });

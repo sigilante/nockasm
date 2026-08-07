@@ -1,11 +1,13 @@
 # Nockasm as a compiler target
 
-*Spec, v0.4 — 2026-07-31. M0 and M0.5 are implemented; later phases
-are design. v0.4 (IR version 2): the types factor into
+*Spec, v0.5 — 2026-08-07. M0 and M0.5 are implemented; later phases
+are design. v0.5 (IR version 3) adds `%scry`, the named form of the
+Nock 12 extension used by Urbit and Nockchain. Both operands are formula
+positions. v0.4 (IR version 2) factored the types into
 `/sur/nockasm` with the vocabulary as a self-parameterized builder;
 the `%nock` opaque embed; `_` anonymous schema positions; the lift
 fallback moves from structural raw cells to `%nock`. All of it is
-pure vocabulary extension — every v1 IR value lowers and renders
+pure vocabulary extension — every v1/v2 IR value lowers and renders
 exactly as before.*
 
 Nockasm today is a one-way street: a human writes `.nasm`, `expand`
@@ -65,7 +67,7 @@ Two integration levels:
   emitted assembly is compact rather than drowning in
   `%push`/`%call` scaffolding. **Conditional** — see §7.
 
-## 3. The IR contract (M0 — implemented; v2 shape)
+## 3. The IR contract (M0 — implemented; v3 vocabulary)
 
 The target IR is the `$nasm` type, promoted from internal AST to
 public interface and factored into `desk/sur/nockasm.hoon`. The
@@ -115,7 +117,7 @@ Public arms (`lib/nockasm.hoon`), with Python equivalents in
 `nockasm.py` (`parse`, `lower`, `render`, `NASM_VERSION`):
 
 ```hoon
-++  nasm-version  ::  2; version of the node set, lowering equations,
+++  nasm-version  ::  3; version of the node set, lowering equations,
                   ::  and rendering rules. append-only. (in the sur)
 ++  parse   ::  @t -> [sch=(unit sema) ast=nasm]
 ++  lower   ::  [sch=(unit sema) ast=nasm] -> *   IR to Nock
@@ -133,6 +135,25 @@ Checked by `tests/test_render.py` (round-trip + idempotence through parse +
 transcriptions) and by `tests/test_hoon.py` (Hoon `render` output is
 **byte-identical** to the Python renderer's, and the Hoon round-trip
 matches, for every corpus case).
+
+### Nock 12 scry extension
+
+IR version 3 adds one named opcode:
+
+```text
+(%scry REF PATH)  ->  [12 REF PATH]
+```
+
+`REF` and `PATH` are both formula positions, so bare atoms lift to
+opcode-1 constants exactly as they do for `%eval`, `%eq`, and `%comp`.
+The runtime evaluates both against the current subject, then delegates the
+resulting ref/path pair to its scry handler. That handler and its failure
+semantics are runtime concerns; Nockasm only specifies the formula shape.
+
+This is an explicit extension beyond Nock 4K. Runtimes that implement only
+opcodes 0–11 can still parse the lowered noun but cannot execute it. The
+extension is append-only at the IR level: every v1/v2 value has unchanged
+lowering and rendering.
 
 **Subject schemas (`$sema`).** Schemas are spec surface and live in
 the sur beside `$nasm`:
@@ -242,13 +263,13 @@ formula, and the lift propagates that assumption through Nock's
 positional grammar (the expander's per-opcode kinds table read in
 reverse). Concretely:
 
-- Cell heads 0–11 with well-shaped tails lift to named ops; formula
+- Cell heads 0–12 with well-shaped tails lift to named ops; formula
   positions recurse; a cell head means cons-formula (both halves
   lift, so a readable half is still read even when its sibling is
   not).
 - **Anywhere a formula-position subtree cannot be macro-ized** — an
   atom in a formula position (`[2 5 6]`, or a bare atom at the
-  root), an opcode head above 11, a cell axis, a malformed tail —
+  root), an opcode head above 12, a cell axis, a malformed tail —
   the node falls back to an opaque `%nock` embed. This makes the
   lift **total** as a formula reader: every subtree is either read
   as a formula or explicitly marked as not one, rather than
@@ -407,6 +428,7 @@ Two tiers, both optional, neither in the IR:
 | M0 | `parse`/`lower`/`render` public, `nasm-version`, round-trip + parity tests | nockasm | **done** |
 | M0.5 | `jam`/`cue`, the deterministic `lift`, `nasm-from-jam` + CLI, soundness + parity tests | nockasm | **done** |
 | v0.4 | `/sur/nockasm` factoring, `+nasm-of` builder, `%nock` embed, `$sema` holes + contract, IR version 2 | nockasm | **done** |
+| v0.5 | `%scry` for Nock 12, deterministic lift support, IR version 3 | nockasm | **done** |
 | M1 | Jock backend: `emit : typed-ast -> nasm` behind a flag; differential CI vs legacy codegen (bit-identical nouns); `.nasm` artifacts in review | jock-lang | design |
 | M2 | The L2 decision, from M1's artifacts; if gated in: the frozen macro batch + benchmark-rewrite acceptance | nockasm | gated |
 | M3 | Provenance comments, `%spot` debug mode | both | design |

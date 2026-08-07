@@ -204,7 +204,12 @@ fn harvest(node: &mut Nasm, stack: &mut Vec<Nasm>) {
             | Op::Context
             | Op::Crash => {}
             Op::Const(x) | Op::Arm(x) | Op::Isa(x) | Op::Inc(x) => grab(x, stack),
-            Op::Eval(a, b) | Op::Eq(a, b) | Op::Comp(a, b) | Op::Push(a, b) | Op::Hint(a, b) => {
+            Op::Eval(a, b)
+            | Op::Eq(a, b)
+            | Op::Comp(a, b)
+            | Op::Push(a, b)
+            | Op::Hint(a, b)
+            | Op::Scry(a, b) => {
                 grab(a, stack);
                 grab(b, stack);
             }
@@ -307,6 +312,9 @@ pub enum Op {
     /// `(%hintd T C F)` → `[11 [T C] F]` — dynamic hint; T in noun
     /// position, C a formula (per the 4K spec the clue is evaluated).
     Hintd(Box<Nasm>, Box<Nasm>, Box<Nasm>),
+    /// `(%scry R P)` → `[12 R P]` — evaluate the reference and path
+    /// formulas, then ask the runtime's scry handler for the result.
+    Scry(Box<Nasm>, Box<Nasm>),
 }
 
 impl Op {
@@ -333,6 +341,7 @@ impl Op {
             Op::Edit(..) => "edit",
             Op::Hint(..) => "hint",
             Op::Hintd(..) => "hintd",
+            Op::Scry(..) => "scry",
         }
     }
 }
@@ -358,7 +367,12 @@ impl Op {
             }
             Op::Slot(n) => vec![Axis(n)],
             Op::Const(x) | Op::Arm(x) | Op::Isa(x) | Op::Inc(x) => vec![Expr(x)],
-            Op::Eval(a, b) | Op::Eq(a, b) | Op::Comp(a, b) | Op::Push(a, b) | Op::Hint(a, b) => {
+            Op::Eval(a, b)
+            | Op::Eq(a, b)
+            | Op::Comp(a, b)
+            | Op::Push(a, b)
+            | Op::Hint(a, b)
+            | Op::Scry(a, b) => {
                 vec![Expr(a), Expr(b)]
             }
             Op::If(a, b, c) | Op::Hintd(a, b, c) => vec![Expr(a), Expr(b), Expr(c)],

@@ -59,7 +59,8 @@ section("fallback paths (data that is not a formula)")
 
 CASES = [
     ("atom in formula position stays raw", (2, (5, 6))),
-    ("opcode head above 11", (12, 3)),
+    ("opcode head above 12", (13, 3)),
+    ("malformed scry", (12, 3)),
     ("slot of a cell", (0, (2, 3))),
     ("bare atom", 42),
     ("const of deep data", (1, cell(9, 9, 9, 9))),

@@ -98,6 +98,8 @@ enum Frame {
     Hint,
     /// `[11 [t c] f]` — dynamic hint.
     Hintd,
+    /// `[12 r p]` — scry reference and path formulas.
+    Scry,
     /// `[8 v b]`.
     Let,
     /// `[8 s dispatch]` over this many arms; children are the
@@ -456,6 +458,19 @@ fn schedule_op<'a>(op: &'a Op, env: Env, tasks: &mut Vec<Task<'a>>, values: &mut
                 formula: false,
             });
         }
+        Op::Scry(r, p) => {
+            tasks.push(Task::Assemble(Frame::Scry));
+            tasks.push(Task::Expand {
+                node: p,
+                env: env.clone(),
+                formula: true,
+            });
+            tasks.push(Task::Expand {
+                node: r,
+                env,
+                formula: true,
+            });
+        }
     }
 }
 
@@ -515,6 +530,11 @@ fn assemble(frame: Frame, values: &mut Vec<Noun>) -> Noun {
             let c = pop(values);
             let t = pop(values);
             noun![11[(t)(c)](f)]
+        }
+        Frame::Scry => {
+            let p = pop(values);
+            let r = pop(values);
+            noun![12(r)(p)]
         }
         Frame::Let => {
             let b = pop(values);

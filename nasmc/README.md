@@ -21,6 +21,10 @@ Output jams are raw formulas (never vases): `dec.nasm` compiles to a
 ~70-byte jamfile that any `cue` reads back directly, including
 `python -m nockasm --from-jam`.
 
+The named vocabulary includes `(%scry REF PATH)` for the Nock 12
+extension; both operands are formula positions and lower to
+`[12 REF PATH]`.
+
 ## Building
 
 Requires the nightly toolchain pinned in `rust-toolchain.toml` (the

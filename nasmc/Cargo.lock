@@ -2067,7 +2067,7 @@ source = "git+https://github.com/nockchain/nockchain.git?rev=6d29078e69b64febabe
 
 [[package]]
 name = "nasmc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "nockapp",

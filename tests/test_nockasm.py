@@ -75,6 +75,10 @@ check("hint static",   expand("(%hint 'fast' (%slot 1))"),
                                                             f"[11 {0x74736166} 0 1]")
 check("hint dynamic",  expand("(%hintd 'fast' 0 (%slot 1))"),
                                                             f"[11 [{0x74736166} 1 0] 0 1]")
+check("scry",         expand("(%scry (%const 138) (%slot 1))"),
+                                                            "[12 [1 138] 0 1]")
+check("scry lifts both formula arguments", expand("(%scry 138 0)"),
+                                                            "[12 [1 138] 1 0]")
 # Clue is a formula position; bare 0 lifts to [1 0]. Use (%slot 1) etc.
 # if you want the clue to be a real formula evaluated against subject.
 
@@ -234,8 +238,8 @@ for _src in ["(%nock 42)", "(%nock [4 0 1])", "(%nock [11 'fast' 0 1])"]:
 
 # lifter fallback: non-macro-izable formula subtrees come back as
 # %nock, and the result still lowers to the input (totality)
-check("lift fallback render", render(None, lift((12, 34))),
-      "(%nock [12 34])\n")
+check("lift fallback render", render(None, lift((13, 34))),
+      "(%nock [13 34])\n")
 check("lift fallback atom", render(None, lift(42)), "(%nock 42)\n")
 check("lift fallback lowers", lower(None, lift((2, (5, 6)))), (2, (5, 6)))
 
@@ -282,6 +286,7 @@ EXPECTED = {
     'unbound-axis':     NameError,
     'unknown-opcode':   NameError,
     'wrong-arity':      TypeError,
+    'scry-wrong-arity': TypeError,
     'slot-cell-axis':   TypeError,
     'match-no-default': SyntaxError,
     'match-dup-default':SyntaxError,
