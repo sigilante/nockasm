@@ -2,15 +2,19 @@
 
 ![](./img/hero.jpg)
 
-Nock Assembly is a thin macro over [Nock ISA](https://nock.is) designed to make the language more legible for pedagogical purposes.
+Nock Assembly is a thin macro over [Nock ISA](https://nock.is), plus the
+Nock 12 scry extension used by Urbit and Nockchain, designed to make the
+language more legible for pedagogical purposes.
 
-**Status ~2026.7.31:  Nockasm is considered *frozen* unless Nock ISA decrements to 3K or a bug is found.**
+**Status ~2026.8.7: Nockasm is considered *frozen* unless Nock ISA changes,
+a deployed runtime extension needs representation, or a bug is found.**
 
 ## Design
 
 | | |
 |---|---|
 | Named opcodes        | `(%inc .x)` instead of `[4 0 2]`. Pure lexical. |
+| Nock 12 scry         | `(%scry REF PATH)` instead of `[12 REF PATH]`; both operands are formulas. |
 | Axis schemas         | `:subject {.a .b .c}` resolves `.a` `.b` `.c` to axes 2, 6, 7. Right-leaning by Hoon convention. |
 | `#let .name = E in B`| Opcode-8 push. Tracks subject shift via `+peg(3, n)` so old names still resolve in body. |
 | `#match E { ... }`   | Scrutinee lifted once via opcode 8. Nested opcode-6 dispatch on literal patterns. Required `_ =>` default. |
@@ -268,6 +272,11 @@ arity arg, etc.). The per-opcode kinds:
 | `%edit N V F`| aff | |
 | `%hint T F`  | nf  | tag is a noun literal |
 | `%hintd T C F` | nff | clue is a formula — per 4K spec it's evaluated |
+| `%scry R P` | ff | Nock 12 extension; ref and path are formulas |
+
+`%scry` lowers to `[12 R P]`. It is a vocabulary extension beyond Nock
+4K: execution requires a runtime with a Nock 12 scry handler. Nockasm only
+assembles and disassembles the formula; it does not prescribe the handler.
 
 The intent-marking opcodes (`%arm`, `%crash`, and the axis aliases) all lower
 to the same cells as their `%const` / `%slot` equivalents — they exist purely
@@ -295,12 +304,12 @@ cons-formula distribution pattern works as expected:
 The suites live in `tests/`; run them from the repo root.
 
 ```bash
-python tests/test_nockasm.py     # unit tests, 61 cases
-python tests/test_e2e.py         # end-to-end: expand -> pinochle -> verify, 19 cases
-python tests/test_benchmarks.py  # urbit/benchmark equivalents, 5 cases (loaded from disk)
-python tests/test_hoon.py        # hoon lib vs python oracle, 48 + 11 cases (urbit eval)
+python tests/test_nockasm.py     # unit tests
+python tests/test_e2e.py         # end-to-end: expand -> pinochle -> verify
+python tests/test_benchmarks.py  # urbit/benchmark equivalents loaded from disk
+python tests/test_hoon.py        # hoon lib vs python oracle (urbit eval)
 python tests/test_render.py      # target-IR round-trip law + render idempotence
-python tests/test_lift.py        # jam/cue vectors + lift soundness, 69 cases
+python tests/test_lift.py        # jam/cue vectors + lift soundness
 python tests/test_desk.py        # on-ship test arms via urbit eval shim
 python tests/test_mark.py        # %nasm clay mark grow/grab round-trips
 python tests/test_rust.py        # rust crate vs python oracle (+ nasmc direct)

@@ -1,5 +1,9 @@
 """
-nockasm: a thin macro expander from Nock Assembly to canonical Nock 4K.
+nockasm: a thin macro expander from Nock Assembly to canonical Nock.
+
+The named vocabulary covers Nock 4K plus the Nock 12 scry extension used
+by Urbit and Nockchain. Runtimes without a scry handler may still parse the
+resulting noun, but cannot execute a %scry formula.
 
 Target: emits whitespace-separated, right-associated bracketed Nock
 parseable by pinochle.parse_noun(). Use the assembler's output as the
@@ -47,6 +51,7 @@ Syntax
     (%edit N V F)   -> [10 [N V] F]
     (%hint T F)     -> [11 T F]            ; static hint
     (%hintd T C F)  -> [11 [T C] F]        ; dynamic hint
+    (%scry R P)     -> [12 R P]            ; evaluate ref and path
 
   ; opaque formula embed — boundary embedding for foreign-produced
   ; formulas (FFI glue, precompiled fragments); not a general escape
@@ -127,9 +132,11 @@ Target IR (see the compiler-target spec: sigilante/jock docs/spec/nockasm-target
 Discipline
 ==========
 
-The canonical Nock 4K specification is the truth. This assembler is a
-text-to-canonical-tree convenience. Where this module's behavior would
-contradict Nock 4K, Nock 4K wins; file a bug.
+The canonical Nock 4K specification is the truth for opcodes 0-11; the
+Nock 12 equation in the compiler-target spec (sigilante/jock
+docs/spec/nockasm-target.md) is the extension contract. This assembler
+is a text-to-canonical-tree convenience. Where this module's behavior
+contradicts either contract, the contract wins; file a bug.
 """
 
 from __future__ import annotations
@@ -137,7 +144,7 @@ import re
 import sys
 from typing import Union, Tuple, Dict, List, Optional, Any
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # Version of the target-IR contract: the $nasm node set, the lowering
 # equations, and the canonical rendering rules. Append-only.
@@ -145,7 +152,10 @@ __version__ = "1.3.0"
 # and the lift fallback moving from structural raw cells to %nock
 # (pure vocabulary extension: every v1 IR value lowers and renders
 # exactly as before).
-NASM_VERSION = 2
+# v3: the %scry named opcode for Nock 12. Both ref and path are formula
+# positions. This is also a pure vocabulary extension; v1/v2 values are
+# unchanged, while lift now names well-shaped opcode-12 formulas.
+NASM_VERSION = 3
 
 
 # ----------------------------------------------------------------------
@@ -579,6 +589,7 @@ class Expander:
         '%edit':  ('aff', lambda a: cell(10, (a[0], a[1]), a[2])),
         '%hint':  ('nf',  lambda a: cell(11, a[0], a[1])),
         '%hintd': ('nff', lambda a: cell(11, (a[0], a[1]), a[2])),
+        '%scry':  ('ff',  lambda a: cell(12, a[0], a[1])),
     }
 
     def expand_program(self, schema, expr) -> Noun:
@@ -804,7 +815,7 @@ def cue(a: int) -> Noun:
 # The deterministic, zero-heuristic lift (compiler-target spec, sigilante/jock).
 # The caller asserts the noun is a formula; positions follow Nock's
 # grammar. Where a formula-position shape cannot be macro-ized (an
-# atom in a formula position, an opcode head above 11, a malformed
+# atom in a formula position, an opcode head above 12, a malformed
 # tail), the node falls back to an opaque (%nock ...) embed -- always
 # sound, never sugared, and the lift is total. Data positions
 # (opcode-1 payloads, dynamic hint tags) stay structural raw cells:
@@ -885,6 +896,9 @@ def lift(n: Noun) -> Node:
                 and _cell(t[1])):
             return OpApp('%hintd', [_noun_ast(t[0][0]), lift(t[0][1]),
                                     lift(t[1])])
+    elif h == 12:
+        if _cell(t) and _cell(t[0]) and _cell(t[1]):
+            return OpApp('%scry', [lift(t[0]), lift(t[1])])
     return NockEmbed(n)
 
 

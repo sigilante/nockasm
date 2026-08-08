@@ -103,7 +103,7 @@
 +$  opco
   $?  %self  %battery  %payload  %sample  %context  %crash
       %slot  %const  %arm  %eval  %isa  %inc  %eq  %if
-      %comp  %push  %call  %edit  %hint  %hintd
+      %comp  %push  %call  %edit  %hint  %hintd  %scry
   ==
 ::
 +|  %version
@@ -113,6 +113,9 @@
 ::  and the lift fallback moving from structural raw cells to %nock
 ::  (pure vocabulary extension: every v1 value lowers and renders
 ::  exactly as before).
+::  3: the %scry named opcode for nock 12. ref and path are formula
+::  positions. pure vocabulary extension: every v1/v2 value lowers
+::  and renders exactly as before.
 ::
-++  nasm-version  2
+++  nasm-version  3
 --

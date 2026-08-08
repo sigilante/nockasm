@@ -1,7 +1,7 @@
 """
 nockasm_kernel: Jupyter kernel for Nock Assembly.
 
-Each cell is Nockasm source — macros are expanded to canonical Nock 4K,
+Each cell is Nockasm source — macros are expanded to canonical Nock,
 then the formula is evaluated against the current subject using pinochle.
 
 Kernel commands (prefix #):

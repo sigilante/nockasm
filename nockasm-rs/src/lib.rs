@@ -1,6 +1,7 @@
 //! Pure Rust implementation of **Nockasm**: a thin macro expander from
 //! legible Nock assembly to canonical [Nock 4K](https://nock.is)
-//! formulas.
+//! formulas plus the Nock 12 `%scry` extension used by Urbit and
+//! Nockchain.
 //!
 //! This crate is a fourth independent executor of the nockasm laws,
 //! alongside the Python reference (`nockasm.py`), the Hoon library
@@ -119,4 +120,7 @@ pub use render::render;
 /// and the lift fallback moving from structural raw cells to `%nock`
 /// (pure vocabulary extension: every v1 IR value lowers and renders
 /// exactly as before).
-pub const NASM_VERSION: u32 = 2;
+/// v3: the `%scry` named opcode for Nock 12. Both ref and path are
+/// formula positions. This is also a pure vocabulary extension; v1/v2
+/// values lower and render exactly as before.
+pub const NASM_VERSION: u32 = 3;

@@ -1,10 +1,10 @@
 [package]
 name = "nockasm"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Chris Allen <cma@bitemyapp.com>"]
-description = "Pure Rust implementation of Nockasm: legible Nock assembly to canonical Nock 4K formulas"
+description = "Pure Rust implementation of Nockasm: legible Nock assembly to canonical Nock formulas"
 license = "MIT"
 repository = "https://github.com/bitemyapp/nockasm"
 keywords = ["nock", "urbit", "nockchain", "assembler", "compiler"]

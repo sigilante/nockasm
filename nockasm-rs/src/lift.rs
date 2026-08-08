@@ -3,10 +3,10 @@
 //!
 //! Nock is homoiconic: nothing in a noun marks it as code, so the caller
 //! asserts the root is a formula and the lift propagates that assumption
-//! through Nock's positional grammar. Cell heads 0–11 with well-shaped
+//! through Nock's positional grammar. Cell heads 0–12 with well-shaped
 //! tails lift to named ops; a cell head means cons-formula (both halves
 //! lift); anywhere a formula-position subtree cannot be macro-ized (an
-//! atom in formula position, an opcode head above 11, a malformed tail)
+//! atom in formula position, an opcode head above 12, a malformed tail)
 //! the node falls back to an opaque `%nock` embed, making the lift total
 //! as a formula reader. Data positions (opcode-1 payloads, dynamic hint
 //! tags) stay structural raw cells: they are nouns, not formulas, so
@@ -68,6 +68,8 @@ enum Frame {
     Hint(Atom),
     /// `[11 [tag clue] f]` — structural tag, lifted clue and body.
     Hintd,
+    /// `[12 ref path]` — two lifted formula children.
+    Scry,
 }
 
 /// Read a noun as a formula (see the module docs and soundness law).
@@ -213,6 +215,14 @@ fn lift_step<'a>(n: &'a Noun, tasks: &mut Vec<Task<'a>>, values: &mut Vec<Nasm>)
             },
             _ => values.push(Nasm::Nock(n.clone())),
         },
+        Some(12) => match t.as_cell() {
+            Some((r, p)) if r.is_cell() && p.is_cell() => {
+                tasks.push(Task::Assemble(Frame::Scry));
+                tasks.push(Task::Lift(p));
+                tasks.push(Task::Lift(r));
+            }
+            _ => values.push(Nasm::Nock(n.clone())),
+        },
         _ => values.push(Nasm::Nock(n.clone())),
     }
 }
@@ -305,6 +315,11 @@ fn assemble(frame: Frame, values: &mut Vec<Nasm>) -> Nasm {
             let clue = pop(values);
             let tag = pop(values);
             Nasm::Op(Op::Hintd(tag, clue, f))
+        }
+        Frame::Scry => {
+            let path = pop(values);
+            let reference = pop(values);
+            Nasm::Op(Op::Scry(reference, path))
         }
     }
 }

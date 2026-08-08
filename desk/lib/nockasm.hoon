@@ -1,4 +1,5 @@
-::  nockasm: parse Nock Assembly source to a canonical Nock 4K formula
+::  nockasm: parse Nock Assembly source to canonical Nock 4K formulas
+::  plus the Nock 12 scry extension
 ::
 ::    a thin macro expander from .nasm source (as a cord) to the
 ::    corresponding Nock formula (as a noun). a port of nockasm.py;
@@ -61,6 +62,7 @@
 ::        (%edit N V F)   -> [10 [N V] F]
 ::        (%hint T F)     -> [11 T F]      ; static hint
 ::        (%hintd T C F)  -> [11 [T C] F]  ; dynamic hint
+::        (%scry R P)     -> [12 R P]      ; evaluate ref and path
 ::
 ::      ; opaque formula embed -- boundary embedding for foreign-
 ::      ; produced formulas (FFI glue, precompiled fragments); not a
@@ -445,6 +447,7 @@
     %hint     ?>(?=([* * ~] as) [11 (expa i.as axes) (form i.t.as axes)])
     %hintd    ?>  ?=([* * * ~] as)
               [11 [(expa i.as axes) (form i.t.as axes)] (form i.t.t.as axes)]
+    %scry    ?>(?=([* * ~] as) [12 (form i.as axes) (form i.t.as axes)])
   ==
 ::
 +|  %target
@@ -487,7 +490,7 @@
 ::  +lift: read a noun as a formula: the deterministic, zero-heuristic,
 ::  total lift. named ops by nock's positional grammar; opaque %nock
 ::  embeds wherever a formula-position subtree cannot be macro-ized
-::  (an atom in formula position, an opcode head above 11, a malformed
+::  (an atom in formula position, an opcode head above 12, a malformed
 ::  tail); no intent claims (constants are %const, never %arm; axes
 ::  are %slot, never the core aliases; no macro skeleton is
 ::  recognized). data positions (opcode-1 payloads, dynamic hint tags)
@@ -529,6 +532,8 @@
            [%op 'hint' [%atom +<.n] $(n +>.n) ~]
          ?.  ?=([[* ^] ^] +.n)  [%nock n]
          [%op 'hintd' (noun-ast +<-.n) $(n +<+.n) $(n +>.n) ~]
+    %12  ?.  ?=([^ ^] +.n)  [%nock n]
+         [%op 'scry' $(n +<.n) $(n +>.n) ~]
   ==
 ::  +noun-ast: a noun as pure structure: atoms and right-spine-
 ::  flattened raw cells, no formula reading

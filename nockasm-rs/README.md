@@ -1,7 +1,8 @@
 # `nockasm` (pure Rust)
 
 A pure Rust implementation of Nockasm: legible Nock assembly in,
-canonical [Nock 4K](https://nock.is) formulas out — the fourth
+canonical [Nock 4K](https://nock.is) plus the Nock 12 `%scry`
+extension out — the fourth
 independent executor of the nockasm laws, after the Python reference
 (`../nockasm.py`), the Hoon library (`../desk/lib/nockasm.hoon`), and
 the Hoon-on-nockvm NockApp (`../nasmc`). The differential suite
@@ -31,7 +32,7 @@ let bytes = jam(&formula);
 assert_eq!(nockasm::nasm_from_jam(&bytes).unwrap(), "(%eq (%slot 2) (%slot 3))\n");
 ```
 
-The pipeline and its laws (IR contract version `NASM_VERSION = 2`,
+The pipeline and its laws (IR contract version `NASM_VERSION = 3`,
 `../doc/compiler-target.md`):
 
 ```
@@ -62,13 +63,14 @@ composed `expand` accepts and rejects exactly the same sources. `lower`
 can only fail on name resolution: unbound axes, schema duplicates,
 `#let` shadowing.
 
-The v2 vocabulary is covered in full: `Nasm::Nock` is the opaque
+The v3 vocabulary is covered in full: `Nasm::Nock` is the opaque
 formula embed (`(%nock F)` — identity expansion, noun-literal-only
 payload, never validated or rewritten; also the lift's fallback for
 any formula-position subtree it cannot macro-ize, which keeps the lift
 total), and `Schema::Hole` is the anonymous subject position (`_` —
 structure with no name bound, so machine-generated schemas mirror
-subject shape without inventing names).
+subject shape without inventing names), and `Op::Scry` represents
+`(%scry R P)` as `[12 R P]` with both arguments in formula position.
 
 Nouns are cheap to clone (reference-counted cells with cached
 structural hashes, which is what makes `jam`'s backreference table

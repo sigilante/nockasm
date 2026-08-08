@@ -102,6 +102,7 @@ GOOD = [
     ('edit', '(%edit 6 (%inc (%slot 1)) (%slot 1))'),
     ('hint', "(%hint 'fast' (%slot 1))"),
     ('hintd', "(%hintd 'fast' 0 (%slot 1))"),
+    ('scry', '(%scry (%const 138) (%slot 1))'),
     ('aliases', '[(%self) (%battery) (%payload) (%sample) (%context) (%crash)]'),
     ('arm', '(%arm (%if (%slot 1) 0 1))'),
     # raw cells
@@ -163,6 +164,7 @@ BAD = [
     ('unbound-axis', '(%inc .x)'),
     ('unknown-opcode', '(%nope 1)'),
     ('wrong-arity', '(%inc 1 2)'),
+    ('scry-wrong-arity', '(%scry 1)'),
     ('match-no-default', ':subject .x #match .x { 1 => 0 }'),
     ('match-dup-default', ':subject .x #match .x { _ => 0 _ => 1 }'),
     ('trailing-tokens', '42 42'),

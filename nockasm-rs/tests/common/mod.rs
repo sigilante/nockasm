@@ -29,6 +29,7 @@ pub const GOOD: &[(&str, &str)] = &[
     ("edit", "(%edit 6 (%inc (%slot 1)) (%slot 1))"),
     ("hint", "(%hint 'fast' (%slot 1))"),
     ("hintd", "(%hintd 'fast' 0 (%slot 1))"),
+    ("scry", "(%scry (%const 138) (%slot 1))"),
     (
         "aliases",
         "[(%self) (%battery) (%payload) (%sample) (%context) (%crash)]",

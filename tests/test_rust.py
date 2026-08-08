@@ -57,7 +57,8 @@ def jam_bytes(noun):
 # enough to exercise bignum parsing, dotted rendering, and the cord form.
 LIFT_CASES = [
     ('atom-in-formula-pos', (2, (5, 6))),
-    ('opcode-above-11', (12, 3)),
+    ('opcode-above-12', (13, 3)),
+    ('malformed-scry', (12, 3)),
     ('slot-of-cell', (0, (2, 3))),
     ('bare-atom', 42),
     ('const-deep-data', (1, cell(9, 9, 9, 9))),
