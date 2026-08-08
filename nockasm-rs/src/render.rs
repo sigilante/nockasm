@@ -1,8 +1,9 @@
 //! `render`: IR to canonical `.nasm` text.
 //!
-//! This is the normative "canonical rendering v1" of
-//! `doc/compiler-target.md`, **byte-identical** to the Python and Hoon
-//! renderers: every layout decision is a pure function of the IR value,
+//! This is the normative "canonical rendering v1" of the compiler-target
+//! spec (sigilante/jock `docs/spec/nockasm-target.md`), **byte-identical**
+//! to the Python and Hoon renderers: every layout decision is a pure
+//! function of the IR value,
 //! the indent, and the *reserve* (how many closing delimiters an
 //! enclosing form will append to the final line), under a 76-column
 //! limit. Nothing remembers source spelling — atoms render from their

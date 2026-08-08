@@ -1,7 +1,8 @@
 //! The `$nasm` target IR, as clean Rust types.
 //!
-//! This is the compiler-target contract of `doc/compiler-target.md`
-//! (IR version [`NASM_VERSION`](crate::NASM_VERSION)), with one Rust
+//! This is the compiler-target contract (sigilante/jock
+//! `docs/spec/nockasm-target.md`; IR version
+//! [`NASM_VERSION`](crate::NASM_VERSION)), with one Rust
 //! refinement: ill-formed nodes are unrepresentable. Where the Python and
 //! Hoon IRs carry `%op` as a free-form name plus argument list and reject
 //! unknown opcodes, wrong arities, and non-atom axis arguments at lower

@@ -1,5 +1,6 @@
 //! `lift`: read a noun as a formula — the deterministic, zero-heuristic
-//! reading of `doc/compiler-target.md` §5.
+//! reading of the compiler-target spec §5 (sigilante/jock
+//! `docs/spec/nockasm-target.md`).
 //!
 //! Nock is homoiconic: nothing in a noun marks it as code, so the caller
 //! asserts the root is a formula and the lift propagates that assumption

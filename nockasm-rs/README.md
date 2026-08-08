@@ -32,8 +32,9 @@ let bytes = jam(&formula);
 assert_eq!(nockasm::nasm_from_jam(&bytes).unwrap(), "(%eq (%slot 2) (%slot 3))\n");
 ```
 
-The pipeline and its laws (IR contract version `NASM_VERSION = 3`,
-`../doc/compiler-target.md`):
+The pipeline and its laws (IR contract version `NASM_VERSION = 3`; see
+the compiler-target spec, maintained in sigilante/jock as
+`docs/spec/nockasm-target.md`):
 
 ```
 .nasm source ─ parse ─▶ Program (schema + Nasm IR)
