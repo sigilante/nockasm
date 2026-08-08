@@ -112,6 +112,50 @@
   %+  expect-eq
     !>(`*`[4 6])
   !>((nock [3 5] (expand ':subject {.a .b}  [(%inc .a) (%inc .b)]')))
+++  test-run-scry-mock
+  ::  a lowered [12 ref path] is exactly what +mink's opcode-12 case
+  ::  consumes: ref and path evaluate as formulas against the
+  ::  subject, then the namespace gate arbitrates. all three
+  ::  outcomes: a produced value, a block on ~, a crash on [~ ~]
+  =/  f  `*`(expand '(%scry (%const 0) (%slot 1))')
+  =/  sub  `*`/the/answer
+  ;:  weld
+    (expect-eq !>(`toon`[%0 42]) !>((mock [sub f] |=(^ ``42))))
+    (expect-eq !>(`toon`[%1 /the/answer]) !>((mock [sub f] |=(^ ~))))
+    (expect-eq !>(%2) !>(-:(mock [sub f] |=(^ [~ ~]))))
+  ==
+++  test-run-scry-roof
+  ::  end to end through a genuine $roof: the arvo namespace gate,
+  ::  downgraded by +look into the raw gate +mock takes. the ref
+  ::  formula must produce [hoon-version type]; the path formula an
+  ::  omen path. the roof serves 42 at /the/answer and nothing else
+  =/  rof=roof
+    |=  [lyc=gang pov=path =omen]
+    ^-  (unit (unit (cask vase)))
+    ?.  =(/the/answer s.bem.omen)  ~
+    ``noun/!>(42)
+  =/  gul  (look rof ~ /test/nockasm)
+  =/  ref  [hoon-version -:!>(*@ud)]
+  =/  f    `*`(expand '(%scry (%slot 2) (%slot 3))')
+  ;:  weld
+    %+  expect-eq
+      !>(`toon`[%0 42])
+    !>((mock [[ref /gx/~zod/test/1/the/answer] f] gul))
+  ::
+    %+  expect-eq
+      !>(`toon`[%1 /gx/~zod/test/1/no/thing])
+    !>((mock [[ref /gx/~zod/test/1/no/thing] f] gul))
+  ==
+++  test-run-dotket-parity
+  ::  .^ compiles to [12 [1 hoon-version type] path]: the same shape
+  ::  %scry lowers to. the lift names the compiler's own emission and
+  ::  round-trips it
+  =/  f  !=(.^(@ud /gx/~zod/test/1/the/answer))
+  =/  ast  (lift:nockasm f)
+  ;:  weld
+    (expect-eq !>(&) !>(?=([%op %scry *] ast)))
+    (expect-eq !>(`*`f) !>((lower:nockasm ~ ast)))
+  ==
 ::
 +|  %target
 ++  test-lower
