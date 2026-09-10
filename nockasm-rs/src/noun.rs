@@ -19,7 +19,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::mem;
 use std::ops::Deref;
 
@@ -202,7 +202,14 @@ impl Atom {
     }
 
     /// A deterministic 64-bit structural hash (FNV-1a over the bytes).
+    #[inline]
     pub(crate) fn hash64(&self) -> u64 {
+        // a small atom is one mix (an interpreter hashes one per cell
+        // it builds); a big one is FNV over its bytes. The two ranges
+        // are disjoint, so equal atoms hash alike.
+        if let Repr::Small(v) = self.0 {
+            return splitmix(v ^ 0xa70a_0000_0000_5e9d);
+        }
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for &b in self.le_bytes().iter() {
             h ^= u64::from(b);
@@ -414,6 +421,12 @@ pub(crate) struct CellData {
     head: Noun,
     tail: Noun,
     hash: u64,
+    /// The Hoon `+mug`, computed on first use and kept (0 = not yet;
+    /// a mug is never 0). A noun with heavy internal sharing — a
+    /// kernel core, whose every gate carries the kernel — is mugged
+    /// in one walk of the DAG this way, as a runtime that keeps the
+    /// mug in the cell does, where a walk of the tree is exponential.
+    mug: std::sync::atomic::AtomicU32,
 }
 
 /// Borrowed view of a noun for pattern matching.
@@ -423,6 +436,58 @@ pub enum NounRef<'a> {
     Atom(&'a Atom),
     /// The noun is a cell `[head tail]`.
     Cell(&'a Noun, &'a Noun),
+}
+
+/// murmur3 (32-bit) over `data` with `seed`.
+pub fn murmur3_32(data: &[u8], seed: u32) -> u32 {
+    let c1: u32 = 0xcc9e_2d51;
+    let c2: u32 = 0x1b87_3593;
+    let mut h = seed;
+    let chunks = data.chunks_exact(4);
+    let rem = chunks.remainder();
+    for c in chunks {
+        let mut k = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        k = k.wrapping_mul(c1);
+        k = k.rotate_left(15);
+        k = k.wrapping_mul(c2);
+        h ^= k;
+        h = h.rotate_left(13);
+        h = h.wrapping_mul(5).wrapping_add(0xe654_6b64);
+    }
+    let mut k: u32 = 0;
+    for (i, &b) in rem.iter().enumerate() {
+        k ^= u32::from(b) << (8 * i);
+    }
+    if !rem.is_empty() {
+        k = k.wrapping_mul(c1);
+        k = k.rotate_left(15);
+        k = k.wrapping_mul(c2);
+        h ^= k;
+    }
+    h ^= data.len() as u32;
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    h
+}
+
+/// `+mum`: the 31-bit fold with the retry on zero, `fal` after eight.
+fn mum(syd: u32, fal: u32, key: &[u8]) -> u32 {
+    // the key's significant bytes only (an atom's byte length)
+    let end = key.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    let key = &key[..end];
+    let mut s = syd;
+    for _ in 0..8 {
+        let haz = murmur3_32(key, s);
+        let ham = (haz >> 31) ^ (haz & 0x7fff_ffff);
+        if ham != 0 {
+            return ham;
+        }
+        s = s.wrapping_add(1);
+    }
+    fal
 }
 
 fn splitmix(mut z: u64) -> u64 {
@@ -443,7 +508,12 @@ impl Noun {
         let head = head.into();
         let tail = tail.into();
         let hash = splitmix(head.hash64() ^ splitmix(tail.hash64() ^ 0xce11));
-        Noun(NounRepr::Cell(P::new(CellData { head, tail, hash })))
+        Noun(NounRepr::Cell(P::new(CellData {
+            head,
+            tail,
+            hash,
+            mug: std::sync::atomic::AtomicU32::new(0),
+        })))
     }
 
     /// Right-associate `elems` into nested cells: `[a b c]` = `[a [b c]]`.
@@ -460,6 +530,47 @@ impl Noun {
             acc = Noun::cell(e, acc);
         }
         Some(acc)
+    }
+
+    /// The Hoon `+mug` of this noun: murmur3 (seed `0xcafebabe` over an
+    /// atom's bytes, `0xdeadbeef` over a cell's pair of mugs), folded to
+    /// 31 bits with the kernel's zero-avoiding retry. Cell mugs are
+    /// cached in the cell, so a shared subtree is hashed once.
+    pub fn mug(&self) -> u32 {
+        use std::sync::atomic::Ordering;
+        match &self.0 {
+            NounRepr::Atom(a) => mum(0xcafe_babe, 0x7fff, &a.le_bytes()),
+            NounRepr::Cell(c) => {
+                let m = c.mug.load(Ordering::Relaxed);
+                if m != 0 {
+                    return m;
+                }
+                // an explicit post-order walk: deep nouns must not recurse
+                let mut stack: Vec<(&Noun, bool)> = vec![(self, false)];
+                while let Some((n, ready)) = stack.pop() {
+                    let NounRepr::Cell(c) = &n.0 else { continue };
+                    if c.mug.load(Ordering::Relaxed) != 0 {
+                        continue;
+                    }
+                    if ready {
+                        let h = c.head.mug();
+                        let t = c.tail.mug();
+                        let k = u64::from(h) | (u64::from(t) << 32);
+                        let m = mum(0xdead_beef, 0xfffe, &k.to_le_bytes());
+                        c.mug.store(m, Ordering::Relaxed);
+                    } else {
+                        stack.push((n, true));
+                        if let NounRepr::Cell(_) = &c.tail.0 {
+                            stack.push((&c.tail, false));
+                        }
+                        if let NounRepr::Cell(_) = &c.head.0 {
+                            stack.push((&c.head, false));
+                        }
+                    }
+                }
+                c.mug.load(Ordering::Relaxed)
+            }
+        }
     }
 
     /// View for pattern matching.
@@ -496,6 +607,7 @@ impl Noun {
         matches!(self.0, NounRepr::Cell(_))
     }
 
+    #[inline]
     pub(crate) fn hash64(&self) -> u64 {
         match &self.0 {
             NounRepr::Atom(a) => a.hash64(),
@@ -547,8 +659,39 @@ impl From<&Noun> for Noun {
 }
 
 impl PartialEq for Noun {
+    /// Structural equality, with two shortcuts and one memo: shared
+    /// cells compare by pointer, cells with different hashes are
+    /// unequal at once, and a pair of cells already compared is not
+    /// walked again. The memo is what keeps a comparison linear in the
+    /// DAG rather than the tree: a noun such as a kernel core shares
+    /// its subtrees enormously (every gate carries the kernel as its
+    /// context), and two separately built copies of one such noun
+    /// would otherwise be walked out to their tree size, which is
+    /// exponential. It is allocated only once a comparison has gone
+    /// past a small number of nodes, so equality of small nouns stays
+    /// allocation-free.
     fn eq(&self, other: &Self) -> bool {
-        let mut stack: Vec<(&Noun, &Noun)> = vec![(self, other)];
+        // the roots first, without a stack: most comparisons an
+        // interpreter makes end here (two atoms, one shared cell, or
+        // two cells whose cached hashes differ)
+        let (x, y) = match (&self.0, &other.0) {
+            (NounRepr::Atom(x), NounRepr::Atom(y)) => return x == y,
+            (NounRepr::Cell(x), NounRepr::Cell(y)) => {
+                if P::ptr_eq(x, y) {
+                    return true;
+                }
+                if x.hash != y.hash {
+                    return false;
+                }
+                (x, y)
+            }
+            _ => return false,
+        };
+        let mut stack: Vec<(&Noun, &Noun)> = Vec::with_capacity(16);
+        stack.push((&x.tail, &y.tail));
+        stack.push((&x.head, &y.head));
+        let mut seen: Option<Seen> = None;
+        let mut steps: usize = 0;
         while let Some((a, b)) = stack.pop() {
             match (&a.0, &b.0) {
                 (NounRepr::Atom(x), NounRepr::Atom(y)) => {
@@ -563,6 +706,14 @@ impl PartialEq for Noun {
                     if x.hash != y.hash {
                         return false;
                     }
+                    steps += 1;
+                    if steps > 256 {
+                        let key = (P::as_ptr(x) as usize, P::as_ptr(y) as usize);
+                        let memo = seen.get_or_insert_with(Seen::default);
+                        if !memo.insert(key) {
+                            continue;
+                        }
+                    }
                     stack.push((&x.tail, &y.tail));
                     stack.push((&x.head, &y.head));
                 }
@@ -574,6 +725,33 @@ impl PartialEq for Noun {
 }
 
 impl Eq for Noun {}
+
+/// The equality memo's set of visited pointer pairs. Its hasher mixes
+/// the two addresses directly (an interpreter compares nouns on every
+/// `=` and every jet lookup, and the default SipHash was the cost of
+/// the comparison).
+type Seen = std::collections::HashSet<(usize, usize), BuildHasherDefault<PairHasher>>;
+
+#[derive(Default)]
+struct PairHasher(u64);
+
+impl Hasher for PairHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(23) ^ x).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    fn write_usize(&mut self, x: usize) {
+        self.write_u64(x as u64);
+    }
+    fn finish(&self) -> u64 {
+        let z = self.0;
+        (z ^ (z >> 31)).wrapping_mul(0x94d0_49bb_1331_11eb) ^ (z >> 29)
+    }
+}
 
 impl Hash for Noun {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -593,8 +771,13 @@ impl Drop for Noun {
         let Some(cell) = P::into_inner(rc) else {
             return; // shared: the count just dropped, nothing to tear down
         };
-        let mut stack = vec![cell];
-        while let Some(cell) = stack.pop() {
+        // the next cell to tear down rides in a local; the stack is
+        // allocated only when both children of a cell are unshared
+        // cells (an interpreter frees a cell per step, and a Vec per
+        // free was most of the cost of freeing)
+        let mut next = Some(cell);
+        let mut stack: Vec<CellData> = Vec::new();
+        while let Some(cell) = next.take() {
             let CellData { head, tail, .. } = cell;
             for mut child in [head, tail] {
                 if matches!(child.0, NounRepr::Atom(_)) {
@@ -605,8 +788,15 @@ impl Drop for Noun {
                     continue;
                 };
                 if let Some(inner) = P::into_inner(rc) {
-                    stack.push(inner);
+                    if next.is_none() {
+                        next = Some(inner);
+                    } else {
+                        stack.push(inner);
+                    }
                 }
+            }
+            if next.is_none() {
+                next = stack.pop();
             }
         }
     }

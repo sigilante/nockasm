@@ -92,6 +92,10 @@ impl BitWriter {
 /// ```
 pub fn jam(n: &Noun) -> Vec<u8> {
     let mut w = BitWriter::new();
+    // a cell's cached mug is interior mutability that `Hash` and `Eq`
+    // do not observe (it is a function of the structure they hash and
+    // compare), so a noun is a sound key
+    #[allow(clippy::mutable_key_type)]
     let mut memo: HashMap<Noun, u64> = HashMap::new();
     let mut stack: Vec<&Noun> = vec![n];
     while let Some(cur) = stack.pop() {

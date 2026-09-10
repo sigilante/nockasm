@@ -73,6 +73,28 @@ structure with no name bound, so machine-generated schemas mirror
 subject shape without inventing names), and `Op::Scry` represents
 `(%scry R P)` as `[12 R P]` with both arguments in formula position.
 
+The `noted` module is the annotated instantiation of that vocabulary —
+the Hoon `+nasm-of` / `noted` pattern from `../desk/sur/nockasm.hoon`,
+kept in the reference's own shape: an opcode is a name applied to a
+list of nodes, so an axis argument is a node that can carry a note
+(a positioned emitter's conformance vectors compare those positions).
+`NasmOf<N>` is the vocabulary generic over its child type, and
+`Noted<A>` ties the knot with a note of type `A` on every node (a
+source position, a provenance tag), so a compiler emitting positioned
+IR gets every vocabulary case by construction instead of maintaining a
+fork. `Noted::strip` projects onto plain `Nasm` — and is where the
+reference implementations' lower-time refusals (`unknown-opcode`,
+`op-arity`, `axis-arg-must-be-atom`, `empty-raw-cell`) live, since the
+typed IR cannot hold them — `Noted::dress` is its section, and
+`noted::lower` / `noted::render` are the bare pipeline composed with
+the projection: the meaning of annotated IR is the meaning of its
+projection. The bridge from the typed vocabulary is one private
+exhaustive match (`unroll`) and the bridge back one opcode table
+(`noted::roll`) the tests hold to the `Op` enum, so a variant added to
+one without the other is a compile or test failure rather than silent
+drift. `Noted` tears down, strips, dresses, and annotates on explicit
+stacks, like `Nasm`.
+
 Nouns are cheap to clone (reference-counted cells with cached
 structural hashes, which is what makes `jam`'s backreference table
 O(1) per node), and atoms are arbitrary-precision with an inline fast

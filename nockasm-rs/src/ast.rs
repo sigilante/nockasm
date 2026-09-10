@@ -42,6 +42,18 @@ impl Name {
         }
     }
 
+    /// A name taken as-is, unvalidated.
+    ///
+    /// The grammar [`Name::new`] enforces is the TEXT format's: the
+    /// reference expander (`+lower`) never validates a name, so a tree
+    /// built programmatically — a compiler emitting nouns, or `lift` of
+    /// a foreign jam — may carry any cord (the Jock emitter's reserved
+    /// temporaries begin with `$`). Such a name renders in the text form
+    /// but does not parse back.
+    pub fn raw(s: impl Into<String>) -> Name {
+        Name(s.into())
+    }
+
     /// The name, without a leading dot.
     pub fn as_str(&self) -> &str {
         &self.0

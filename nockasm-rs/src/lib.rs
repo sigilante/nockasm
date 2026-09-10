@@ -47,7 +47,11 @@
 //! (or construction) time here, and [`lower`] can only fail on name
 //! resolution ([`LowerError`]). Compilers targeting nockasm (the
 //! intended embedder) construct [`Program`] values directly and get the
-//! same guarantees without going through text.
+//! same guarantees without going through text. A compiler that needs
+//! to carry source positions or provenance on its IR uses [`noted`]:
+//! the reference vocabulary in its own untyped shape, generic over its
+//! recursion, with a checked projection back to [`Nasm`] that is the
+//! conformance contract.
 //!
 //! # Example
 //!
@@ -100,6 +104,7 @@ mod jam;
 mod lex;
 mod lift;
 mod lower;
+pub mod noted;
 pub mod noun;
 pub mod parse;
 mod render;
