@@ -129,7 +129,13 @@ target IR — `parse` / `lower` / `render`, with `render` byte-identical
 across the two and governed by the round-trip law
 `expand(render(x)) == lower(x)` — plus `jam` / `cue` / `lift` /
 `nasm-from-jam` for reading jammed formulas back to source under the
-soundness law `lower(lift(f)) == f`. See the compiler-target spec, maintained in the Jock repository: [sigilante/jock `docs/spec/nockasm-target.md`](https://github.com/sigilante/jock/blob/master/docs/spec/nockasm-target.md).
+soundness law `lower(lift(f)) == f`. See the compiler-target spec — **v0.5, IR version 3**, matching
+`+nasm-version` in `desk/sur/nockasm.hoon` — maintained in the Jock
+repository: [sigilante/jock `docs/spec/nockasm-target.md`](https://github.com/sigilante/jock/blob/master/docs/spec/nockasm-target.md).
+The version is named here because the link tracks that repository's
+default branch: a reader who cannot resolve it, or who resolves it at
+a moment when it has moved, still knows which IR this tree
+implements.
 
 ## Use in a NockApp
 
