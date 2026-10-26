@@ -84,9 +84,8 @@ and emits a constant-noun hoon AST leaf:
 plus `+is-nasm` (extension test, parallel to `+is-hoon`) and the
 vendored library. Expansion errors become build errors with `~|`
 traces, caching falls out of the existing file-hash machinery, and
-the `%jock` mark is the precedent for source-typed build inputs. This
-is the Tier 2 item from the compiler-target spec §10 (now in sigilante/jock, `docs/spec/nockasm-target.md`), sized at ~20
-lines plus the vendor.
+the `%jock` mark is the precedent for source-typed build inputs. It is
+sized at ~20 lines plus the vendor.
 
 ## Interchange summary
 
