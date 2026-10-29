@@ -16,9 +16,10 @@
 ::      > (expand:nasm '(%inc (%self))')
 ::      [4 0 1]
 ::      > .*([10 41 99] (expand:nasm ':subject {.a .b} .b'))
-::      [42 99]
+::      [41 99]
 ::
-::    as a compiler target (doc/compiler-target.md): $nasm is a
+::    as a compiler target (sigilante/jock
+::    docs/spec/nockasm-target.md): $nasm is a
 ::    versioned public IR. +parse takes source to IR; +lower takes IR
 ::    to canonical nock; +render takes IR to canonical .nasm text,
 ::    byte-identical to the python renderer, under the round-trip law
@@ -67,8 +68,13 @@
 ::      ; opaque formula embed -- boundary embedding for foreign-
 ::      ; produced formulas (FFI glue, precompiled fragments); not a
 ::      ; general escape hatch. F is a noun literal (atoms and [...]
-::      ; cells only, never an expression); expansion is identity and
-::      ; the payload is never recursed into, validated, or rewritten:
+::      ; cells only, never an expression); expansion is identity in
+::      ; noun and top position but NOT in formula position, where
+::      ; the payload passes through +quot -- so (%inc (%nock 42))
+::      ; and (%inc (%nock [1 42])) both expand to [4 1 42] and are
+::      ; indistinguishable. identity holds for a cell payload
+::      ; everywhere. the payload is never recursed into,
+::      ; validated, or rewritten:
 ::        (%nock F)       -> F
 ::
 ::      ; structural macros:
@@ -91,9 +97,13 @@
 ::    distribution for free).
 ::
 ::    errors crash with a tagged trace: %unbound-axis,
-::    %unknown-opcode, %op-arity, %let-shadows, %match-needs-default,
+::    %unknown-opcode, %let-shadows, %match-needs-default,
 ::    %duplicate-schema-name, and friends. parse errors crash from
 ::    +scan with {line column}.
+::
+::    arity is the exception: it is enforced by the list patterns
+::    in +expa-op, so (%inc) crashes with that arm's ~| clue --
+::    [%opcode 'inc' %args 0] -- and no tag of its own.
 ::
 /-  *nockasm
 |%
@@ -452,7 +462,8 @@
 ::
 +|  %target
 ::
-::    the compiler-target contract (doc/compiler-target.md): $nasm as
+::    the compiler-target contract (sigilante/jock
+::    docs/spec/nockasm-target.md): $nasm as
 ::    a versioned IR, +lower to canonical nock, +render to canonical
 ::    .nasm text. the round-trip law, checked by the differential
 ::    suite against the python implementation:
@@ -632,7 +643,10 @@
 ::  +rend: render at an indent as a list of lines (indent included).
 ::  res is the reserve: characters an enclosing form will append to
 ::  this expression's final line (closing delimiters), so that width
-::  decisions account for them and no emitted line exceeds 76.
+::  decisions account for them. the budget governs the wide-vs-tall
+::  choice only: a leaf atom and an axis name are emitted whole
+::  with no width test, so a long %const cord renders a line past
+::  76.
 ::
 ++  rend
   |=  [e=nasm ind=@ud res=@ud]

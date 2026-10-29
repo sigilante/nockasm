@@ -1,6 +1,7 @@
 ::  nockasm: shared types for the nockasm target IR
 ::
-::    the spec surface of doc/compiler-target.md, factored so that
+::    the spec surface of the compiler-target spec (sigilante/jock
+::    docs/spec/nockasm-target.md), factored so that
 ::    downstream toolchains (compilers emitting $nasm, debuggers,
 ::    formatters) vendor the types without the implementation.
 ::    /lib/nockasm is the reference implementation over these types
